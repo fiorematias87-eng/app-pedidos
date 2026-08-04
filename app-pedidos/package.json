@@ -1,0 +1,42 @@
+{
+  "name": "app-pedidos",
+  "version": "1.0.0",
+  "description": "A high-performance delivery management platform with client, admin, and driver interfaces.",
+  "main": "src/main.tsx",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "serve": "vite preview",
+    "lint": "eslint . --ext .ts,.tsx",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0",
+    "react-router-dom": "^6.0.0",
+    "supabase-js": "^2.0.0",
+    "tailwindcss": "^3.0.0",
+    "postcss": "^8.0.0",
+    "autoprefixer": "^10.0.0",
+    "redux": "^4.0.0",
+    "react-redux": "^8.0.0",
+    "typescript": "^4.0.0"
+  },
+  "devDependencies": {
+    "vite": "^3.0.0",
+    "eslint": "^8.0.0",
+    "prettier": "^2.0.0",
+    "eslint-plugin-react": "^7.0.0",
+    "eslint-config-prettier": "^8.0.0",
+    "eslint-plugin-import": "^2.0.0"
+  },
+  "keywords": [
+    "delivery",
+    "management",
+    "react",
+    "supabase",
+    "redux"
+  ],
+  "author": "Your Name",
+  "license": "MIT"
+}
