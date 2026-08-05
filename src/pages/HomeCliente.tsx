@@ -34,6 +34,25 @@ export default function HomeCliente() {
   const [notas, setNotas] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [config, setConfig] = useState<TiendaConfig | null>(null);
+
+  function normalizeTiendaConfig(raw: any): TiendaConfig | null {
+    if (!raw) return null;
+    return {
+      id: raw.id || 'store',
+      nombre: raw.nombre || raw.nombre_tienda || '',
+      descripcion: raw.descripcion || raw.subtitulo || '',
+      subtitulo: raw.subtitulo || raw.descripcion || '',
+      direccion: raw.direccion || '',
+      telefono: raw.telefono || raw.phone || '',
+      logo_url: raw.logo_url || raw.logo || '',
+      portada_url: raw.portada_url || raw.portada || '',
+      banco: raw.banco || '',
+      titular_nombre: raw.titular_nombre || '',
+      titular_cuit: raw.titular_cuit || '',
+      alias: raw.alias || '',
+      cbu_cvu: raw.cbu_cvu || raw.cbu || '',
+    } as TiendaConfig;
+  }
   const [categories, setCategories] = useState<Categoria[]>([]);
   const [products, setProducts] = useState<Producto[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
@@ -43,25 +62,35 @@ export default function HomeCliente() {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    const load = async () => {
-      const [store, cats, prods] = await Promise.all([pedidosService.getStoreConfig(), pedidosService.getCategories(), pedidosService.getProducts()]);
-      setConfig(store);
-      setCategories(cats.filter((item) => item.activa));
-      setProducts(prods.filter((item) => item.disponible));
+    const loadAllData = async () => {
+      const [resConfig, resCats, resProds] = await Promise.all([
+        supabase.from('tienda_config').select('*').eq('id', 'store').maybeSingle(),
+        supabase.from('categorias').select('*').order('orden', { ascending: true }),
+        supabase.from('productos').select('*').order('created_at', { ascending: false }),
+      ]);
+
+      if (resConfig.data) setConfig(normalizeTiendaConfig(resConfig.data));
+      if (resCats.data) setCategories((resCats.data as Categoria[]).filter((item) => item.activa));
+      if (resProds.data) setProducts((resProds.data as Producto[]).filter((item) => item.disponible));
     };
-    void load();
+
+    void loadAllData();
 
     const channel = supabase.channel('public:all');
     channel.on('postgres_changes', { event: '*', schema: 'public', table: 'tienda_config', filter: 'id=eq.store' }, (payload) => {
       if (payload.new) {
-        setConfig(payload.new as TiendaConfig);
+        setConfig(normalizeTiendaConfig(payload.new));
       }
     });
     channel.on('postgres_changes', { event: '*', schema: 'public', table: 'categorias' }, () => {
-      void pedidosService.getCategories().then((cats) => setCategories(cats.filter((item) => item.activa)));
+      void supabase.from('categorias').select('*').order('orden', { ascending: true }).then((result) => {
+        if (result.data) setCategories((result.data as Categoria[]).filter((item) => item.activa));
+      });
     });
     channel.on('postgres_changes', { event: '*', schema: 'public', table: 'productos' }, () => {
-      void pedidosService.getProducts().then((prods) => setProducts(prods.filter((item) => item.disponible)));
+      void supabase.from('productos').select('*').order('created_at', { ascending: false }).then((result) => {
+        if (result.data) setProducts((result.data as Producto[]).filter((item) => item.disponible));
+      });
     });
 
     void channel.subscribe();
@@ -115,72 +144,60 @@ export default function HomeCliente() {
     }
   };
 
-  const handleCheckout = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!cart.length) {
-      setStatus('Agregá alguno de los productos para seguir.');
-      return;
+  const sanitizeWhatsAppPhone = (phoneRaw: string) => {
+    let cleanPhone = phoneRaw.replace(/\D/g, '');
+    if (!cleanPhone) return '';
+    if (cleanPhone.startsWith('0')) cleanPhone = cleanPhone.substring(1);
+    if (cleanPhone.startsWith('15')) cleanPhone = `11${cleanPhone.substring(2)}`;
+    if (!cleanPhone.startsWith('549') && cleanPhone.length >= 10) {
+      cleanPhone = `549${cleanPhone}`;
     }
-    if (!cliente.trim()) {
-      setStatus('Completá tu nombre para confirmar el pedido.');
-      return;
-    }
-    if (!telefono.trim()) {
-      setStatus('Completá tu teléfono para confirmar el pedido.');
-      return;
-    }
-    if (deliveryMethod === 'delivery' && !direccion.trim()) {
-      setStatus('Completá la dirección para el delivery.');
-      return;
-    }
+    return cleanPhone;
+  };
+
+  const handleEnviarWhatsApp = async () => {
+    if (submitting) return;
+    setSubmitting(true);
 
     try {
-      setSubmitting(true);
-      setStatus(null);
-      const pedido = await pedidosService.createPedido({
-        cliente_nombre: cliente.trim(),
-        cliente_telefono: telefono.trim(),
-        cliente_direccion: deliveryMethod === 'delivery' ? direccion.trim() : 'Retiro por local',
-        notas: notas || null,
-        estado: 'pendiente',
-        productos: cart.map((item) => ({ nombre: item.nombre, cantidad: item.cantidad, precio: item.precio })),
-        subtotal,
-        envio,
-        total,
-        metodo_entrega: deliveryMethod,
-        metodo_pago: paymentMethod,
-        created_at: new Date().toISOString(),
-      });
-
-      const deliveryText = deliveryMethod === 'delivery' ? `Delivery (${direccion.trim()})` : 'Retiro';
-      const paymentText = paymentMethod === 'transferencia' ? 'Transferencia' : 'Efectivo';
-      const tiendaNombre = config?.nombre || 'Mi Delivery';
-      const phoneRaw = config?.telefono || '';
-      const phoneClean = phoneRaw.replace(/\D/g, '');
-      if (!phoneClean) {
-        setStatus('El comercio no tiene teléfono configurado para WhatsApp.');
+      if (!cart || cart.length === 0) {
+        alert('El carrito está vacío.');
         return;
       }
-      const itemsText = cart
-        .map((item) => `- ${item.cantidad}x ${item.nombre} ($${item.precio * item.cantidad})`)
-        .join('\n');
-      const message = `🍔 *NUEVO PEDIDO - ${tiendaNombre}* 🍔\n----------------------------------\n👤 *Cliente:* ${cliente.trim()}\n📞 *Teléfono:* ${telefono.trim()}\n🛵 *Entrega:* ${deliveryText}\n💳 *Pago:* ${paymentText}\n\n📋 *DETALLE:*\n${itemsText}\n\n💰 *Subtotal:* ${formatCurrency(subtotal)}\n🛵 *Envío:* ${formatCurrency(envio)}\n🔥 *TOTAL:* ${formatCurrency(total)}\n----------------------------------\n📍 *Notas / Indicaciones:* ${notas || '-'}\n`;
-      const waUrl = `https://wa.me/${phoneClean}?text=${encodeURIComponent(message)}`;
-      window.open(waUrl, '_blank', 'noopener,noreferrer');
 
-      toast.success('¡Pedido enviado con éxito! 🚀');
-      setCart([]);
-      setCliente('');
-      setTelefono('');
-      setDireccion('');
-      setNotas('');
-      setIsCartOpen(false);
-      navigate(`/pedido/${pedido.id}`);
-    } catch {
-      setStatus('No se pudo crear el pedido.');
+      const num = sanitizeWhatsAppPhone(config?.telefono || '');
+      if (!num) {
+        alert('Atención: El comercio no tiene un número de WhatsApp cargado en la configuración.');
+        return;
+      }
+
+      try {
+        await supabase.from('pedidos').insert([
+          {
+            contenido: cart,
+            total,
+            estado: 'pendiente',
+          },
+        ]);
+      } catch (dbErr) {
+        console.warn('No se pudo registrar el pedido en BD, pero se procederá a enviar WhatsApp:', dbErr);
+      }
+
+      const detalle = (cart || []).map((item) => `• ${item.cantidad}x ${item.nombre} ($${item.precio * item.cantidad})`).join('\n');
+      const mensaje = `*NUEVO PEDIDO*\n\n${detalle}\n\n*Total:* $${total}`;
+      const waUrl = `https://api.whatsapp.com/send?phone=${num}&text=${encodeURIComponent(mensaje)}`;
+      window.location.href = waUrl;
+    } catch (error) {
+      console.error('Error al procesar el envío de WhatsApp:', error);
+      alert('Ocurrió un error al abrir WhatsApp. Revisa la consola.');
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleCheckout = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    await handleEnviarWhatsApp();
   };
 
   return (
@@ -238,7 +255,7 @@ export default function HomeCliente() {
                   </div>
 
                   <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                    {filteredProducts.map((producto) => (
+                    {(filteredProducts || []).map((producto) => (
                       <article key={producto.id} className="group overflow-hidden rounded-[28px] border border-slate-800 bg-slate-950 p-4 transition hover:-translate-y-0.5 hover:border-cyan-500/60">
                         <div className="relative overflow-hidden rounded-3xl bg-slate-900">
                           {producto.imagen_url ? (
@@ -280,7 +297,7 @@ export default function HomeCliente() {
                     <p className="text-sm uppercase tracking-[0.3em] text-cyan-400">Pedido en vivo</p>
                     <h2 className="mt-3 text-xl font-semibold text-white">Carrito</h2>
                     <div className="mt-4 space-y-3">
-                      {cart.length ? cart.map((item) => (
+                      {(cart || []).length ? (cart || []).map((item) => (
                         <div key={item.id} className="rounded-3xl border border-slate-800 bg-slate-950/80 p-4">
                           <div className="flex items-start justify-between gap-3">
                             <div>
@@ -348,7 +365,7 @@ export default function HomeCliente() {
                     {cart.length ? (
                       <div className="space-y-4">
                         <div className="space-y-3">
-                          {cart.map((item) => (
+                          {(cart || []).map((item) => (
                             <div key={item.id} className="flex items-center justify-between rounded-3xl border border-slate-800 bg-slate-900/70 px-4 py-4">
                               <div>
                                 <p className="font-semibold text-white">{item.nombre}</p>
@@ -409,7 +426,7 @@ export default function HomeCliente() {
                             <div className="mt-3 flex items-center justify-between border-t border-slate-800 pt-3 text-base font-semibold text-white"><span>Total</span><span>{formatCurrency(total)}</span></div>
                           </div>
 
-                          <button type="submit" disabled={submitting} className="w-full rounded-3xl bg-amber-400 px-5 py-4 text-base font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-70">
+                          <button type="button" disabled={submitting} onClick={() => void handleEnviarWhatsApp()} className="w-full rounded-3xl bg-amber-400 px-5 py-4 text-base font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-70">
                             {submitting ? 'Procesando...' : 'Enviar pedido por WhatsApp 📲'}
                           </button>
                         </form>

@@ -14,6 +14,7 @@ export interface TiendaConfig {
   titular_cuit?: string | null;
   cbu_cvu?: string | null;
   alias?: string | null;
+  updated_at?: string | null;
 }
 
 export interface Categoria {
@@ -31,6 +32,7 @@ export interface Producto {
   precio: number;
   imagen_url?: string | null;
   disponible: boolean;
+  updated_at?: string | null;
 }
 
 export interface Repartidor {
