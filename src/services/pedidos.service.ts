@@ -177,16 +177,18 @@ export const pedidosService = {
     return data as Pedido;
   },
 
-  subscribeToOrders(callback: (pedido: Pedido) => void) {
-    const channel = supabase.channel('pedidos-realtime');
+  subscribeToOrders(callback: (pedido: Pedido, eventType: 'INSERT' | 'UPDATE' | 'DELETE') => void) {
+    // Use a stable channel name shared across admin and delivery
+    const channel = supabase.channel('pedidos_updates');
 
     channel.on(
       'postgres_changes',
-      { event: '*', schema: 'public', table: 'pedidos' },
+      { event: ['INSERT', 'UPDATE', 'DELETE'], schema: 'public', table: 'pedidos' },
       (payload) => {
+        const eventType = (payload.eventType || payload.type) as 'INSERT' | 'UPDATE' | 'DELETE';
         const next = payload.new ?? payload.old;
         if (next) {
-          callback(next as Pedido);
+          callback(next as Pedido, eventType);
         }
       }
     );

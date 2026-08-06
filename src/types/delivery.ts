@@ -1,4 +1,4 @@
-export type EstadoPedido = 'pendiente' | 'preparando' | 'en_camino' | 'entregado' | 'cancelado';
+export type EstadoPedido = 'pendiente' | 'en_preparacion' | 'en_cocina' | 'en_camino' | 'entregado' | 'cancelado';
 
 export interface TiendaConfig {
   id: string;
@@ -47,19 +47,21 @@ export interface Pedido {
   cliente_nombre: string;
   cliente_telefono: string;
   cliente_direccion: string;
-  productos: Array<{
+  items: Array<{
     nombre: string;
     cantidad: number;
     precio: number;
   }>;
   subtotal: number;
-  envio: number;
+  costo_envio: number;
   total: number;
   estado: EstadoPedido;
+  origen?: 'web' | 'whatsapp' | 'admin' | null;
   repartidor_id?: string | null;
   notas?: string | null;
   metodo_entrega?: 'delivery' | 'retiro' | null;
   metodo_pago?: 'efectivo' | 'transferencia' | null;
+  paga_con?: string | null;
   created_at: string;
   updated_at?: string | null;
   lat?: number | null;

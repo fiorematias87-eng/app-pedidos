@@ -4,15 +4,9 @@ import { toast } from 'sonner';
 import { pedidosService } from '../services/pedidos.service';
 import { uploadImage } from '../lib/uploadImage';
 import { supabase } from '../lib/supabase';
+import KanbanOrders from '../components/admin/KanbanOrders';
+import DriverManager from '../components/admin/DriverManager';
 import type { Categoria, EstadoPedido, Pedido, Producto, Repartidor, TiendaConfig } from '../types/delivery';
-
-const statusLabel: Record<EstadoPedido, string> = {
-  pendiente: 'Pendiente',
-  preparando: 'Preparando',
-  en_camino: 'En Camino',
-  entregado: 'Entregado',
-  cancelado: 'Cancelado',
-};
 
 const initialConfig: TiendaConfig = {
   id: 'store',
@@ -113,6 +107,7 @@ function ProductSection({
   uploadingField,
   handleNuevoProductoBtn,
 }: ProductSectionProps) {
+  const [isProductsOpen, setIsProductsOpen] = useState(true);
   const isEditing = Boolean(editingProductId || editingProduct?.id);
   const formTitle = isEditing ? 'Editar producto' : 'Nuevo producto';
   const activeProduct = isEditing
@@ -163,66 +158,80 @@ function ProductSection({
             </select>
           </div>
 
-          <div className="mt-4 space-y-3">
-            {filteredProducts.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-950/80 p-4 text-sm text-slate-400">No hay productos para mostrar.</div>
-            ) : (
-              filteredProducts.map((product) => {
-                const categoryName = categories.find((category) => category.id === product.categoria_id)?.nombre || 'Sin categoría';
-                return (
-                  <div key={product.id} className="rounded-3xl border border-slate-800 bg-slate-950/80 p-4 shadow-sm shadow-slate-950/10">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="h-16 w-16 overflow-hidden rounded-3xl bg-slate-800">
-                          {product.imagen_url ? (
-                            <img src={product.imagen_url} alt={product.nombre} className="h-full w-full object-cover" />
-                          ) : (
-                            <div className="flex h-full w-full items-center justify-center text-xs uppercase text-slate-500">Sin imagen</div>
-                          )}
-                        </div>
-                        <div>
-                          <p className="text-sm font-semibold text-white">{product.nombre}</p>
-                          <p className="mt-1 text-xs text-slate-400 line-clamp-2">{product.descripcion || 'Sin descripción'}</p>
-                          <div className="mt-2 inline-flex items-center rounded-full bg-slate-800 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-300">
-                            {categoryName}
+          <div className="mt-4 rounded-3xl border border-slate-800 bg-slate-950/80">
+            <button
+              type="button"
+              onClick={() => setIsProductsOpen((prev) => !prev)}
+              className="flex w-full items-center justify-between px-4 py-4 text-left text-sm font-semibold text-white transition hover:bg-slate-900"
+            >
+              <span>📦 Gestión de Productos ({filteredProducts.length} productos)</span>
+              <span>{isProductsOpen ? '▲' : '▼'}</span>
+            </button>
+            <div className={`overflow-hidden transition-[max-height,opacity] duration-300 ${isProductsOpen ? 'max-h-[600px] opacity-100' : 'max-h-0 opacity-0'}`}>
+              <div className="max-h-[600px] overflow-y-auto px-4 pb-4 pt-2">
+                {filteredProducts.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-950/80 p-4 text-sm text-slate-400">No hay productos para mostrar.</div>
+                ) : (
+                  <div className="space-y-3">
+                    {filteredProducts.map((product) => {
+                      const categoryName = categories.find((category) => category.id === product.categoria_id)?.nombre || 'Sin categoría';
+                      return (
+                        <div key={product.id} className="rounded-3xl border border-slate-800 bg-slate-950/80 p-4 shadow-sm shadow-slate-950/10">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="flex items-center gap-3">
+                              <div className="h-16 w-16 overflow-hidden rounded-3xl bg-slate-800">
+                                {product.imagen_url ? (
+                                  <img src={product.imagen_url} alt={product.nombre} className="h-full w-full object-cover" />
+                                ) : (
+                                  <div className="flex h-full w-full items-center justify-center text-xs uppercase text-slate-500">Sin imagen</div>
+                                )}
+                              </div>
+                              <div>
+                                <p className="text-sm font-semibold text-white">{product.nombre}</p>
+                                <p className="mt-1 text-xs text-slate-400 line-clamp-2">{product.descripcion || 'Sin descripción'}</p>
+                                <div className="mt-2 inline-flex items-center rounded-full bg-slate-800 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-300">
+                                  {categoryName}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-col gap-2 text-right sm:items-end">
+                              <span className="text-sm font-semibold text-amber-400">{formatCurrency(product.precio)}</span>
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  onClick={() => void handleToggleProduct(product, !product.disponible)}
+                                  className={`rounded-full px-3 py-2 text-xs font-semibold transition ${product.disponible ? 'bg-emerald-600/10 text-emerald-300 hover:bg-emerald-600/20' : 'bg-rose-500/10 text-rose-300 hover:bg-rose-500/20'}`}>
+                                  {product.disponible ? '✅ Disponible' : '🚫 Sin stock'}
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setEditingProductId(product.id);
+                                    setEditingProduct(product);
+                                    setCurrentProductImage(product.imagen_url || null);
+                                    setEditingProductFile(null);
+                                  }}
+                                  className="rounded-full bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-100 transition hover:bg-slate-700"
+                                >
+                                  ✏️ Editar
+                                </button>
+                                <button
+                                  onClick={() => void handleDeleteProduct(product.id)}
+                                  className="rounded-full bg-rose-500/15 px-3 py-2 text-xs font-semibold text-rose-300 transition hover:bg-rose-500/20"
+                                >
+                                  🗑️ Eliminar
+                                </button>
+                              </div>
+                            </div>
                           </div>
                         </div>
-                      </div>
-
-                      <div className="flex flex-col gap-2 text-right sm:items-end">
-                        <span className="text-sm font-semibold text-amber-400">{formatCurrency(product.precio)}</span>
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            onClick={() => void handleToggleProduct(product, !product.disponible)}
-                            className={`rounded-full px-3 py-2 text-xs font-semibold transition ${product.disponible ? 'bg-emerald-600/10 text-emerald-300 hover:bg-emerald-600/20' : 'bg-rose-500/10 text-rose-300 hover:bg-rose-500/20'}`}>
-                            {product.disponible ? '✅ Disponible' : '🚫 Sin stock'}
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              setEditingProductId(product.id);
-                              setEditingProduct(product);
-                              setCurrentProductImage(product.imagen_url || null);
-                              setEditingProductFile(null);
-                            }}
-                            className="rounded-full bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-100 transition hover:bg-slate-700"
-                          >
-                            ✏️ Editar
-                          </button>
-                          <button
-                            onClick={() => void handleDeleteProduct(product.id)}
-                            className="rounded-full bg-rose-500/15 px-3 py-2 text-xs font-semibold text-rose-300 transition hover:bg-rose-500/20"
-                          >
-                            🗑️ Eliminar
-                          </button>
-                        </div>
-                      </div>
-                    </div>
+                      );
+                    })}
                   </div>
-                );
-              })
-            )}
+                )}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -308,15 +317,14 @@ function ProductSection({
 
 export default function AdminPanel() {
   const [orders, setOrders] = useState<Pedido[]>([]);
-  const [orderTab, setOrderTab] = useState<'pendiente' | 'preparando' | 'en_camino' | 'entregado'>('pendiente');
-  const [printOrder, setPrintOrder] = useState<Pedido | null>(null);
+  const [assignDriverSelection, setAssignDriverSelection] = useState<Record<string, string>>({});
   const [config, setConfig] = useState<TiendaConfig>(initialConfig);
   const [categories, setCategories] = useState<Categoria[]>([]);
   const [products, setProducts] = useState<Producto[]>([]);
   const [repartidores, setRepartidores] = useState<Repartidor[]>([]);
   const [pulse, setPulse] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
-    caja: true,
+    pedidos: true,
     comercio: true,
     identidad: true,
     cuentas: true,
@@ -407,36 +415,60 @@ export default function AdminPanel() {
   useEffect(() => {
     const load = async () => {
       await loadAllData();
-      const [drivers, pedidos] = await Promise.all([pedidosService.getRepartidores(), pedidosService.getPedidos()]);
-      setRepartidores(drivers);
+      
+      // Carga inmediata de repartidores desde Supabase
+      const { data: driversData, error: driversError } = await supabase
+        .from('repartidores')
+        .select('*')
+        .order('nombre', { ascending: true });
+      
+      if (driversError) {
+        console.error('Error cargando repartidores:', driversError);
+      } else if (driversData) {
+        setRepartidores(driversData as Repartidor[]);
+      }
+
+      const pedidos = await pedidosService.getPedidos();
       setOrders(pedidos);
     };
 
     void load();
 
-    const ordersChannel = supabase
-      .channel('pedidos-realtime')
+    const ordersChannel = pedidosService.subscribeToOrders((pedido, eventType) => {
+      setOrders((prev) => {
+        if (eventType === 'DELETE') {
+          return prev.filter((item) => item.id !== pedido.id);
+        }
+
+        const exists = prev.find((item) => item.id === pedido.id);
+        if (!exists) {
+          if (pedido.estado === 'pendiente') {
+            playAttentionTone();
+            toast.success(`Nuevo pedido recibido: ${pedido.id}`);
+          }
+          return [pedido, ...prev];
+        }
+
+        return prev.map((item) => (item.id === pedido.id ? pedido : item));
+      });
+      setPulse(true);
+      window.setTimeout(() => setPulse(false), 800);
+    });
+
+    // Suscripción en tiempo real a repartidores
+    const driversChannel = supabase
+      .channel('repartidores-realtime')
       .on(
         'postgres_changes',
-        { event: ['INSERT', 'UPDATE'], schema: 'public', table: 'pedidos' },
-        (payload) => {
-          const pedido = payload.new as Pedido;
-          if (!pedido) return;
-
-          setOrders((prev) => {
-            const exists = prev.find((item) => item.id === pedido.id);
-            if (!exists) {
-              if (payload.eventType === 'INSERT' && pedido.estado === 'pendiente') {
-                playAttentionTone();
-                toast.success(`Nuevo pedido recibido: ${pedido.id}`);
-              }
-              return [pedido, ...prev];
-            }
-            return prev.map((item) => (item.id === pedido.id ? pedido : item));
-          });
-
-          setPulse(true);
-          window.setTimeout(() => setPulse(false), 800);
+        { event: '*', schema: 'public', table: 'repartidores' },
+        async () => {
+          const { data: driversData } = await supabase
+            .from('repartidores')
+            .select('*')
+            .order('nombre', { ascending: true });
+          if (driversData) {
+            setRepartidores(driversData as Repartidor[]);
+          }
         }
       )
       .subscribe();
@@ -454,8 +486,9 @@ export default function AdminPanel() {
     });
 
     return () => {
-      ordersChannel.unsubscribe();
-      publicChannel.unsubscribe();
+      void supabase.removeChannel(ordersChannel);
+      void supabase.removeChannel(driversChannel);
+      void supabase.removeChannel(publicChannel);
     };
   }, []);
 
@@ -484,15 +517,8 @@ export default function AdminPanel() {
     }
   };
 
-  const handlePrintOrder = (order: Pedido) => {
-    setPrintOrder(order);
-    const afterPrint = async () => {
-      window.removeEventListener('afterprint', afterPrint);
-      await handleStatusChange(order, 'preparando');
-      setPrintOrder(null);
-    };
-    window.addEventListener('afterprint', afterPrint);
-    window.setTimeout(() => window.print(), 100);
+  const handleAdvanceStatus = async (order: Pedido, nextState: EstadoPedido) => {
+    await handleStatusChange(order, nextState);
   };
 
   const filteredProducts = useMemo(() => {
@@ -845,24 +871,39 @@ export default function AdminPanel() {
     setProducts(await pedidosService.getProducts());
   };
 
-  const handleCreateDriver = async () => {
-    if (!newDriver.nombre) return;
-    await pedidosService.createRepartidor({ nombre: newDriver.nombre, telefono: newDriver.telefono, estado: newDriver.estado });
-    setNewDriver({ nombre: '', telefono: '', estado: 'disponible' });
-    setRepartidores(await pedidosService.getRepartidores());
+  const handleCreateDriver = async (driver: Omit<Repartidor, 'id'>) => {
+    const { error } = await supabase
+      .from('repartidores')
+      .insert([driver]);
+    
+    if (error) {
+      console.error('Error creando repartidor:', error);
+      throw error;
+    }
   };
 
-  const handleUpdateDriver = async (id: string) => {
-    if (!editingDriver.nombre) return;
-    await pedidosService.updateRepartidor(id, { nombre: editingDriver.nombre, telefono: editingDriver.telefono, estado: editingDriver.estado });
-    setEditingDriverId(null);
-    setEditingDriver({});
-    setRepartidores(await pedidosService.getRepartidores());
+  const handleUpdateDriver = async (id: string, updates: Partial<Repartidor>) => {
+    const { error } = await supabase
+      .from('repartidores')
+      .update(updates)
+      .eq('id', id);
+    
+    if (error) {
+      console.error('Error actualizando repartidor:', error);
+      throw error;
+    }
   };
 
   const handleDeleteDriver = async (id: string) => {
-    await pedidosService.deleteRepartidor(id);
-    setRepartidores(await pedidosService.getRepartidores());
+    const { error } = await supabase
+      .from('repartidores')
+      .delete()
+      .eq('id', id);
+    
+    if (error) {
+      console.error('Error eliminando repartidor:', error);
+      throw error;
+    }
   };
 
   const handleUpload = async (field: 'logo_url' | 'portada_url' | 'imagen_url', file: File | null) => {
@@ -905,7 +946,65 @@ export default function AdminPanel() {
   };
 
   const handleAssignDriver = async (order: Pedido, repartidorId: string) => {
-    await pedidosService.updatePedido(order.id, { repartidor_id: repartidorId, updated_at: new Date().toISOString() });
+    if (!repartidorId) return;
+    await pedidosService.updatePedido(order.id, {
+      repartidor_id: repartidorId,
+      updated_at: new Date().toISOString(),
+    });
+  };
+
+  const handleAssignAndSend = async (order: Pedido, repartidorId: string) => {
+    if (!repartidorId) {
+      toast.error('Elegí un repartidor para enviar el pedido');
+      return;
+    }
+    // Optimistic update: move locally first, then persist. Revert on failure.
+    const original = orders.find((o) => o.id === order.id);
+    setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, repartidor_id: repartidorId, estado: 'en_camino', updated_at: new Date().toISOString() } : o)));
+    try {
+      await pedidosService.updatePedido(order.id, {
+        estado: 'en_camino',
+        repartidor_id: repartidorId,
+        updated_at: new Date().toISOString(),
+      });
+      toast.success('Pedido enviado al repartidor ✅');
+    } catch (err) {
+      console.error('Error asignando repartidor:', err);
+      toast.error('No se pudo asignar el repartidor. Revirtiendo...');
+      if (original) {
+        setOrders((prev) => prev.map((o) => (o.id === order.id ? original : o)));
+      }
+    }
+  };
+
+  const handleQuickAssign = async (order: Pedido) => {
+    const availableDriver = repartidores.find((driver) => driver.estado === 'disponible');
+    if (!availableDriver) {
+      toast.error('No hay repartidores disponibles para asignar rápidamente');
+      return;
+    }
+
+    await handleAssignAndSend(order, availableDriver.id);
+  };
+
+  const getAssignedDriverName = (order: Pedido) => {
+    return repartidores.find((driver) => driver.id === order.repartidor_id)?.nombre || 'Sin asignar';
+  };
+
+  const isToday = (value: string) => {
+    const date = new Date(value);
+    const now = new Date();
+    return date.getDate() === now.getDate() && date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+  };
+
+  const getTimeElapsed = (createdAt: string): string => {
+    const now = new Date();
+    const orderTime = new Date(createdAt);
+    const diffMs = now.getTime() - orderTime.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    if (diffMins < 60) return `${diffMins}m`;
+    const diffHours = Math.floor(diffMins / 60);
+    return `${diffHours}h ${diffMins % 60}m`;
   };
 
   const toggleSection = (key: string) => setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -916,53 +1015,25 @@ export default function AdminPanel() {
         @media screen {
           .print-only { display: none; }
         }
+
         @media print {
-          body * { visibility: hidden; }
-          .print-only, .print-only * { visibility: visible; }
-          .print-only { position: absolute; left: 0; top: 0; width: 80mm; padding: 12px; font-family: 'Courier New', Courier, monospace; background: white; color: black; }
-          .print-only .ticket { margin-bottom: 12px; }
-          .print-only .cut-line { border-top: 1px dashed #000; margin: 12px 0; }
-          .print-only p, .print-only span { font-size: 12px; }
-          .print-only h2 { font-size: 14px; margin-bottom: 8px; }
+          body * { visibility: hidden !important; }
+          .print-only, .print-only * { visibility: visible !important; }
+          .print-only { position: absolute !important; left: 0 !important; top: 0 !important; width: 80mm !important; padding: 8px !important; margin: 0 !important; background: white !important; color: black !important; font-family: 'Courier New', Courier, monospace !important; }
+          .ticket-print { width: 100% !important; font-size: 12px !important; color: black !important; }
+          .ticket-header, .ticket-section, .ticket-footer { margin-bottom: 10px !important; }
+          .ticket-title { font-size: 16px !important; font-weight: 700 !important; margin-bottom: 4px !important; }
+          .ticket-subtitle { font-size: 12px !important; margin-bottom: 4px !important; text-transform: uppercase !important; letter-spacing: 0.1em !important; }
+          .ticket-meta, .ticket-row, .ticket-product-row { font-size: 11px !important; line-height: 1.3 !important; }
+          .ticket-product-name { display: inline-block !important; width: 60% !important; word-break: break-word !important; }
+          .ticket-product-qty, .ticket-product-total { display: inline-block !important; width: 18% !important; text-align: right !important; }
+          .ticket-total { font-size: 13px !important; font-weight: 700 !important; }
+          .ticket-divider { border-top: 1px dashed black !important; margin: 8px 0 !important; }
+          .ticket-notes { white-space: pre-wrap !important; }
+          button, a, input, select, textarea, nav, header, footer, .rounded-[32px], .border, .bg-[#07111f] { display: none !important; }
         }
       `}</style>
       <div className="mx-auto max-w-6xl px-3 py-4 sm:px-6 lg:px-8">
-        {printOrder ? (
-          <div className="print-only">
-            <div className="ticket">
-              <h2>Ticket 1 - Caja / Cocina</h2>
-              <p>Pedido #{printOrder.id}</p>
-              <p>Cliente: {printOrder.cliente_nombre}</p>
-              <p>Dirección: {printOrder.cliente_direccion}</p>
-              <p>Teléfono: {printOrder.cliente_telefono || 'No cargado'}</p>
-              <p>Método pago: {printOrder.metodo_pago || 'N/A'}</p>
-              <div className="mt-2">
-                {printOrder.productos.map((producto, index) => (
-                  <p key={`ticket1-${index}`}>{producto.cantidad}x {producto.nombre} - {formatCurrency(producto.precio * producto.cantidad)}</p>
-                ))}
-              </div>
-              <div className="mt-2">
-                <p>Total: {formatCurrency(printOrder.total)}</p>
-                <p>Envío: {formatCurrency(printOrder.envio)}</p>
-                <p>Subtotal: {formatCurrency(printOrder.subtotal)}</p>
-              </div>
-            </div>
-            <div className="cut-line" />
-            <div className="ticket">
-              <h2>Ticket 2 - Delivery / Empaque</h2>
-              <p>Cliente: {printOrder.cliente_nombre}</p>
-              <p>Dirección: {printOrder.cliente_direccion}</p>
-              <p>Teléfono: {printOrder.cliente_telefono || 'No cargado'}</p>
-              <p>Monto a cobrar: {formatCurrency(printOrder.total)}</p>
-              <div className="mt-2">
-                <p className="uppercase tracking-[0.18em] text-xs">Productos</p>
-                {printOrder.productos.map((producto, index) => (
-                  <p key={`ticket2-${index}`}>[ ] {producto.cantidad}x {producto.nombre}</p>
-                ))}
-              </div>
-            </div>
-          </div>
-        ) : null}
         <div className="rounded-[32px] border border-cyan-950/70 bg-[#07111f] p-4 shadow-[0_20px_80px_rgba(2,6,23,0.6)] sm:p-6">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
             <div>
@@ -988,93 +1059,32 @@ export default function AdminPanel() {
             })}
           </div>
 
+          {/* MANAGER DE REPARTIDORES - TOP LEVEL */}
+          <div className="mt-6 mb-6">
+            <DriverManager
+              repartidores={repartidores}
+              orders={orders}
+              onAddDriver={handleCreateDriver}
+              onEditDriver={handleUpdateDriver}
+              onDeleteDriver={handleDeleteDriver}
+            />
+          </div>
+
+<div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/70 overflow-hidden">
+              <button onClick={() => toggleSection('pedidos')} className="flex w-full items-center justify-between px-4 py-4 text-left text-white">
+                <span className="flex items-center gap-2 text-sm font-semibold"><CircleDollarSign className="h-4 w-4 text-cyan-400" />📦 Flujo de pedidos</span>
+                {expanded['pedidos'] ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+              </button>
+              {expanded['pedidos'] ? <div className="border-t border-slate-800 px-4 py-4"><KanbanOrders orders={orders} repartidores={repartidores} getTimeElapsed={getTimeElapsed} getAssignedDriverName={getAssignedDriverName} handleAdvanceStatus={handleStatusChange} handleAssignAndSend={handleAssignAndSend} handleQuickAssign={handleQuickAssign} formatCurrency={formatCurrency} assignDriverSelection={assignDriverSelection} setAssignDriverSelection={setAssignDriverSelection} /></div> : null}
+            </div>
+
           <div className="mt-6 space-y-3">
             {[
-              { key: 'caja', title: '🧾 Panel de comandas', icon: CircleDollarSign, content: <div className="space-y-4">
-                  <div className="flex flex-wrap gap-2">
-                    {(['pendiente', 'preparando', 'en_camino', 'entregado'] as const).map((tab) => (
-                      <button
-                        key={tab}
-                        onClick={() => setOrderTab(tab)}
-                        className={`rounded-full px-4 py-2 text-sm font-semibold ${orderTab === tab ? 'bg-cyan-500 text-slate-950' : 'bg-slate-800 text-slate-300'}`}
-                      >
-                        {tab === 'pendiente' ? 'Pendientes' : tab === 'preparando' ? 'En preparación' : tab === 'en_camino' ? 'En camino' : 'Historial'}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="space-y-4">
-                    {(orders.filter((order) => {
-                      if (orderTab === 'pendiente') return order.estado === 'pendiente';
-                      if (orderTab === 'preparando') return order.estado === 'preparando';
-                      if (orderTab === 'en_camino') return order.estado === 'en_camino';
-                      return order.estado === 'entregado';
-                    }).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()) || []).map((order) => (
-                      <div key={order.id} className="rounded-3xl border border-slate-800 bg-slate-950/90 p-4 shadow-sm shadow-slate-950/10">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          <div>
-                            <p className="text-sm font-semibold text-white">Pedido #{order.id}</p>
-                            <p className="text-xs text-slate-400">{new Date(order.created_at).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}</p>
-                          </div>
-                          <span className="rounded-full bg-slate-800 px-2 py-1 text-xs uppercase tracking-[0.18em] text-slate-300">{statusLabel[order.estado]}</span>
-                        </div>
-
-                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                          <div className="space-y-1 text-sm text-slate-300">
-                            <p><span className="font-semibold text-white">Cliente:</span> {order.cliente_nombre}</p>
-                            <p><span className="font-semibold text-white">Dirección:</span> {order.cliente_direccion}</p>
-                            <p><span className="font-semibold text-white">Teléfono:</span> {order.cliente_telefono || 'No cargado'}</p>
-                          </div>
-                          <div className="space-y-1 text-sm text-slate-300">
-                            <p><span className="font-semibold text-white">Pago:</span> {order.metodo_pago || 'N/A'}</p>
-                            <p><span className="font-semibold text-white">Entrega:</span> {order.metodo_entrega || 'N/A'}</p>
-                            <p><span className="font-semibold text-white">Total:</span> {formatCurrency(order.total)}</p>
-                          </div>
-                        </div>
-
-                        <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-900/80 p-3 text-sm text-slate-300">
-                          <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Detalle de ítems</p>
-                          <div className="mt-2 space-y-1">
-                            {order.productos.map((producto, index) => (
-                              <div key={`${order.id}-${index}`} className="flex items-center justify-between gap-2">
-                                <span>{producto.cantidad}x {producto.nombre}</span>
-                                <span>{formatCurrency(producto.precio * producto.cantidad)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div className="mt-4 flex flex-wrap gap-2">
-                          {order.estado === 'pendiente' ? (
-                            <button type="button" onClick={() => handlePrintOrder(order)} className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950">🖨️ Imprimir y Cocinar</button>
-                          ) : null}
-                          {order.estado === 'preparando' ? (
-                            <button type="button" onClick={() => void handleStatusChange(order, 'en_camino')} className="rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white">🛵 Enviar con Delivery</button>
-                          ) : null}
-                          {order.estado === 'en_camino' ? (
-                            <span className="rounded-xl bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-300">En camino</span>
-                          ) : null}
-                          {order.estado === 'entregado' ? (
-                            <span className="rounded-xl bg-slate-700 px-4 py-2 text-sm font-semibold text-slate-300">Completado</span>
-                          ) : null}
-                        </div>
-                      </div>
-                    ))}
-                    {orders.filter((order) => {
-                      if (orderTab === 'pendiente') return order.estado === 'pendiente';
-                      if (orderTab === 'preparando') return order.estado === 'preparando';
-                      if (orderTab === 'en_camino') return order.estado === 'en_camino';
-                      return order.estado === 'entregado';
-                    }).length === 0 ? (
-                      <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-950/70 p-6 text-sm text-slate-400">No hay comandas en esta vista.</div>
-                    ) : null}
-                  </div>
-                </div> },
               { key: 'comercio', title: '👤 Información del comercio', icon: UserRound, content: <div className="grid gap-3 md:grid-cols-2"><div className="space-y-3"><input value={config.nombre} onChange={(e) => setConfig({ ...config, nombre: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="Nombre" /><textarea value={config.descripcion || ''} onChange={(e) => setConfig({ ...config, descripcion: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="Descripción" /><input value={config.subtitulo || ''} onChange={(e) => setConfig({ ...config, subtitulo: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="Subtítulo / categoría" /><input value={config.direccion || ''} onChange={(e) => setConfig({ ...config, direccion: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="Dirección" /><input value={config.telefono || ''} onChange={(e) => setConfig({ ...config, telefono: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="Teléfono" /><button onClick={() => void handleSaveBrandingConfig()} className="flex items-center justify-center gap-2 rounded-2xl bg-cyan-500 px-4 py-3 text-sm font-semibold text-slate-950">{savingConfigSection === 'brand' ? <><Loader2 className="h-4 w-4 animate-spin" />Guardando...</> : 'Guardar Cambios'}</button></div><div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 text-sm text-slate-400">Actualizá la identidad del comercio para que quede visible en la tienda y en la vista de delivery.</div></div> },
               { key: 'identidad', title: '📸 Identidad visual e imágenes', icon: ImageIcon, content: <div className="grid gap-3 md:grid-cols-2"><label className="rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm"><span className="mb-2 block text-slate-400">Logo del comercio</span><input type="file" accept="image/*" onChange={(e) => void handleUpload('logo_url', e.target.files?.[0] || null)} className="w-full text-slate-300" />{uploadingField === 'logo_url' ? <div className="mt-2 flex items-center gap-2 text-cyan-400"><Loader2 className="h-4 w-4 animate-spin" />Subiendo imagen...</div> : null}{config.logo_url ? <img src={config.logo_url} alt="Preview logo" className="mt-3 h-20 w-full rounded-2xl object-cover" /> : null}</label><label className="rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm"><span className="mb-2 block text-slate-400">Portada</span><input type="file" accept="image/*" onChange={(e) => void handleUpload('portada_url', e.target.files?.[0] || null)} className="w-full text-slate-300" />{uploadingField === 'portada_url' ? <div className="mt-2 flex items-center gap-2 text-cyan-400"><Loader2 className="h-4 w-4 animate-spin" />Subiendo imagen...</div> : null}{config.portada_url ? <img src={config.portada_url} alt="Preview portada" className="mt-3 h-24 w-full rounded-2xl object-cover" /> : null}</label><div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 text-sm text-slate-400">Subí imágenes reales desde tu computadora. Se actualizarán automáticamente en la tienda y en la vista de delivery.</div></div> },
               { key: 'cuentas', title: '💳 Cuentas de transferencia', icon: Landmark, content: <div className="grid gap-3 md:grid-cols-2"><input value={config.banco || ''} onChange={(e) => setConfig({ ...config, banco: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="Banco" /><input value={config.titular_nombre || ''} onChange={(e) => setConfig({ ...config, titular_nombre: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="Titular" /><input value={config.titular_cuit || ''} onChange={(e) => setConfig({ ...config, titular_cuit: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="CUIT / CUIL" /><input value={config.alias || ''} onChange={(e) => setConfig({ ...config, alias: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="Alias" /><input value={config.cbu_cvu || ''} onChange={(e) => setConfig({ ...config, cbu_cvu: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="CBU / CVU" /><button onClick={() => void handleSaveBankConfig()} className="flex items-center justify-center gap-2 rounded-2xl bg-amber-400 px-4 py-3 text-sm font-semibold text-slate-950">{savingConfigSection === 'bank' ? <><Loader2 className="h-4 w-4 animate-spin" />Guardando...</> : 'Guardar Cambios'}</button></div> },
               { key: 'categorias', title: '📚 Estructura de secciones (categorías)', icon: PackageCheck, content: <div className="space-y-3"><div className="flex gap-2"><input value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className="flex-1 rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="Agregar categoría" /><button onClick={handleCreateCategory} className="rounded-2xl bg-cyan-500 px-4 py-3 text-sm font-semibold text-slate-950">Agregar</button></div><div className="space-y-2">{categories.map((category, index) => <div key={category.id} className="flex items-center justify-between rounded-2xl border border-slate-800 bg-slate-900/70 px-3 py-3 text-sm"><div className="flex items-center gap-2"><span>{['🍕','🥟','🍔'][index % 3]}</span><span>{category.nombre}</span></div><div className="flex gap-2"><button onClick={() => { setEditingCategoryId(category.id); setEditingCategoryName(category.nombre); }} className="rounded-full bg-slate-800 px-3 py-1 text-xs">Editar</button><button onClick={() => { void handleDeleteCategory(category.id); }} className="rounded-full bg-rose-500/15 px-3 py-1 text-xs text-rose-300">Eliminar</button></div></div>)}</div>{editingCategoryId ? <div className="flex gap-2"><input value={editingCategoryName} onChange={(e) => setEditingCategoryName(e.target.value)} className="flex-1 rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" /><button onClick={() => { void handleUpdateCategory(editingCategoryId, editingCategoryName); }} className="rounded-2xl bg-amber-400 px-4 py-3 text-sm font-semibold text-slate-950">Guardar</button></div> : null}</div> },
               { key: 'productos', title: '🛍️ Gestión de productos', icon: Sparkles, content: <ProductSection categories={categories} products={products} filteredProducts={filteredProducts} search={search} selectedCategory={selectedCategory} setSearch={setSearch} setSelectedCategory={setSelectedCategory} newProduct={newProduct} setNewProduct={setNewProduct} editingProduct={editingProduct} setEditingProduct={setEditingProduct} editingProductId={editingProductId} setEditingProductId={setEditingProductId} currentProductImage={currentProductImage} setCurrentProductImage={setCurrentProductImage} editingProductFile={editingProductFile} setEditingProductFile={setEditingProductFile} handleSaveProducto={handleSaveProducto} handleDeleteProduct={handleDeleteProduct} handleToggleProduct={handleToggleProduct} handleUpload={handleUpload} uploadingField={uploadingField} handleNuevoProductoBtn={handleNuevoProductoBtn} /> },
-              { key: 'reparto', title: '🛵 Gestión de repartidores y despacho', icon: Truck, content: <div className="space-y-3"><div className="grid gap-3 md:grid-cols-3"><input value={newDriver.nombre} onChange={(e) => setNewDriver({ ...newDriver, nombre: e.target.value })} className="rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="Nombre" /><input value={newDriver.telefono} onChange={(e) => setNewDriver({ ...newDriver, telefono: e.target.value })} className="rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="Teléfono" /><select value={newDriver.estado} onChange={(e) => setNewDriver({ ...newDriver, estado: e.target.value as Repartidor['estado'] })} className="rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none"><option value="disponible">Disponible</option><option value="ocupado">Ocupado</option><option value="inactivo">Inactivo</option></select></div><button onClick={handleCreateDriver} className="rounded-2xl bg-cyan-500 px-4 py-3 text-sm font-semibold text-slate-950">Agregar repartidor</button><div className="space-y-2">{repartidores.map((driver) => <div key={driver.id} className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3"><div className="flex items-center justify-between"><span>{driver.nombre}</span><span className="text-slate-400">{driver.estado}</span></div>{editingDriverId === driver.id ? <div className="mt-3 space-y-2"><input value={editingDriver.nombre || ''} onChange={(e) => setEditingDriver({ ...editingDriver, nombre: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none" /><input value={editingDriver.telefono || ''} onChange={(e) => setEditingDriver({ ...editingDriver, telefono: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none" /><select value={editingDriver.estado || 'disponible'} onChange={(e) => setEditingDriver({ ...editingDriver, estado: e.target.value as Repartidor['estado'] })} className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none"><option value="disponible">Disponible</option><option value="ocupado">Ocupado</option><option value="inactivo">Inactivo</option></select><button onClick={() => void handleUpdateDriver(driver.id)} className="rounded-2xl bg-cyan-500 px-3 py-2 text-sm font-semibold text-slate-950">Guardar</button></div> : <div className="mt-3 flex gap-2"><button onClick={() => { setEditingDriverId(driver.id); setEditingDriver(driver); }} className="rounded-full bg-slate-800 px-3 py-2 text-xs">Editar</button><button onClick={() => { void handleDeleteDriver(driver.id); }} className="rounded-full bg-rose-500/15 px-3 py-2 text-xs text-rose-300">Eliminar</button></div>}</div>)}</div><div className="space-y-2">{orders.filter((order) => order.estado !== 'entregado' && order.estado !== 'cancelado').map((order) => <div key={order.id} className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3"><div className="flex items-start justify-between gap-2"><div><p className="font-medium text-white">{order.cliente_nombre}</p><p className="text-xs text-slate-400">{order.cliente_direccion}</p></div><span className="rounded-full bg-slate-800 px-2 py-1 text-[11px] text-slate-300">{statusLabel[order.estado]}</span></div><div className="mt-3 flex flex-wrap gap-2"><select value={order.repartidor_id || ''} onChange={(e) => { void handleAssignDriver(order, e.target.value); }} className="rounded-xl border border-slate-700 bg-slate-950 px-2 py-2 text-sm"><option value="">Asignar repartidor</option>{repartidores.map((driver) => <option key={driver.id} value={driver.id}>{driver.nombre}</option>)}</select><button onClick={() => { void handleStatusChange(order, 'preparando'); }} className="rounded-xl bg-sky-600 px-3 py-2 text-sm text-white">Preparando</button><button onClick={() => { void handleStatusChange(order, 'en_camino'); }} className="rounded-xl bg-violet-600 px-3 py-2 text-sm text-white">En camino</button><button onClick={() => { void handleStatusChange(order, 'entregado'); }} className="rounded-xl bg-emerald-600 px-3 py-2 text-sm text-white">Entregado</button></div></div>)}</div></div> },
             ].map((section) => {
               const Icon = section.icon;
               const isOpen = expanded[section.key];

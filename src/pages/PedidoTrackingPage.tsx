@@ -120,7 +120,7 @@ export default function PedidoTrackingPage() {
         <div className="mt-4 rounded-[24px] border border-slate-800 bg-slate-900/70 p-4">
           <p className="text-sm font-semibold text-white">Productos</p>
           <div className="mt-3 space-y-2">
-            {pedido.productos.map((item, index) => (
+            {pedido.items.map((item, index) => (
               <div key={`${item.nombre}-${index}`} className="flex items-center justify-between rounded-2xl bg-slate-950/80 px-3 py-2 text-sm text-slate-300">
                 <span>{item.cantidad}× {item.nombre}</span>
                 <span>{formatCurrency(item.precio * item.cantidad)}</span>

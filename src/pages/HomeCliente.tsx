@@ -155,41 +155,126 @@ export default function HomeCliente() {
     return cleanPhone;
   };
 
+  const buildOrderData = (params: {
+    cliente: string;
+    telefono: string;
+    direccion: string;
+    notas: string;
+    cart: CartItem[];
+    subtotal: number;
+    envio: number;
+    total: number;
+    deliveryMethod: DeliveryMethod;
+    paymentMethod: PaymentMethod;
+    whatsappNumber: string;
+  }) => {
+    const nombreCliente = params.cliente.trim() || 'Cliente General';
+    const telefonoCliente = params.telefono.trim() || '';
+    const direccionCliente = params.direccion.trim() || 'Retira en local';
+    const pagoLabel = params.paymentMethod === 'efectivo' ? 'Efectivo' : 'Transferencia';
+    const tipoEntrega = params.deliveryMethod === 'delivery' ? 'Delivery' : 'Retiro';
+    const detalle = params.cart
+      .map((item) => `• ${item.cantidad}x ${item.nombre} ($${item.precio * item.cantidad})`)
+      .join('\n');
+    const mensaje = `*NUEVO PEDIDO* 🛒\n\n${detalle}\n\n*Subtotal:* $${params.subtotal}\n*Envío:* $${params.envio}\n*Total:* $${params.total}\n\n*Datos:*\nNombre: ${nombreCliente}\nTeléfono: ${telefonoCliente}\nDirección: ${direccionCliente}\nEntrega: ${tipoEntrega}\nPago: ${pagoLabel}\n\nNotas: ${params.notas || 'N/A'}`;
+    const waUrl = `https://api.whatsapp.com/send?phone=${params.whatsappNumber}&text=${encodeURIComponent(mensaje)}`;
+
+    return {
+      pedidoData: {
+        cliente: nombreCliente,
+        cliente_nombre: nombreCliente,
+        cliente_telefono: telefonoCliente,
+        cliente_direccion: direccionCliente,
+        items: params.cart,
+        subtotal: params.subtotal,
+        costo_envio: params.envio,
+        total: Number(params.total) || 0,
+        metodo_pago: params.paymentMethod,
+        paga_con: pagoLabel,
+        estado: 'pendiente',
+        origen: 'whatsapp',
+        repartidor_id: null,
+        repartidor_nombre: null,
+        notas: params.notas || null,
+        created_at: new Date().toISOString(),
+      },
+      waUrl,
+    };
+  };
+
   const handleEnviarWhatsApp = async () => {
     if (submitting) return;
     setSubmitting(true);
 
     try {
+      // Validación de carrito
       if (!cart || cart.length === 0) {
-        alert('El carrito está vacío.');
+        toast.error('El carrito está vacío.');
+        return;
+      }
+
+      // Validación de datos del cliente
+      if (!telefono.trim()) {
+        toast.error('Por favor, ingresa tu teléfono.');
+        return;
+      }
+      if (deliveryMethod === 'delivery' && !direccion.trim()) {
+        toast.error('Por favor, ingresa tu dirección de entrega.');
         return;
       }
 
       const num = sanitizeWhatsAppPhone(config?.telefono || '');
       if (!num) {
-        alert('Atención: El comercio no tiene un número de WhatsApp cargado en la configuración.');
+        toast.error('El comercio no tiene un número de WhatsApp configurado.');
         return;
       }
 
+      const { pedidoData, waUrl } = buildOrderData({
+        cliente,
+        telefono,
+        direccion,
+        notas,
+        cart,
+        subtotal,
+        envio,
+        total,
+        deliveryMethod,
+        paymentMethod,
+        whatsappNumber: num,
+      });
+
+      let shouldOpenWhatsApp = false;
+
       try {
-        await supabase.from('pedidos').insert([
-          {
-            contenido: cart,
-            total,
-            estado: 'pendiente',
-          },
-        ]);
-      } catch (dbErr) {
-        console.warn('No se pudo registrar el pedido en BD, pero se procederá a enviar WhatsApp:', dbErr);
+        const { data, error } = await supabase.from('pedidos').insert([pedidoData]).select();
+        if (error) {
+          console.error('Error al guardar el pedido en Supabase:', error);
+        } else if (!data || data.length === 0) {
+          console.error('La inserción en Supabase no devolvió pedido guardado.');
+        } else {
+          toast.success(`Pedido guardado #${data[0]?.id?.slice(0, 8) || 'OK'}`);
+        }
+        shouldOpenWhatsApp = true;
+      } catch (insertError) {
+        console.error('Excepción al guardar el pedido en Supabase:', insertError);
+        shouldOpenWhatsApp = true;
       }
 
-      const detalle = (cart || []).map((item) => `• ${item.cantidad}x ${item.nombre} ($${item.precio * item.cantidad})`).join('\n');
-      const mensaje = `*NUEVO PEDIDO*\n\n${detalle}\n\n*Total:* $${total}`;
-      const waUrl = `https://api.whatsapp.com/send?phone=${num}&text=${encodeURIComponent(mensaje)}`;
-      window.location.href = waUrl;
+      // **PASO 3: Limpiar carrito tras intentar guardar**
+      setCart([]);
+      setCliente('');
+      setTelefono('');
+      setDireccion('');
+      setNotas('');
+      setIsCartOpen(false);
+
+      if (shouldOpenWhatsApp && waUrl) {
+        window.open(waUrl, '_blank');
+      }
     } catch (error) {
-      console.error('Error al procesar el envío de WhatsApp:', error);
-      alert('Ocurrió un error al abrir WhatsApp. Revisa la consola.');
+      console.error('Error al procesar checkout:', error);
+      const errorMsg = error instanceof Error ? error.message : 'Ocurrió un error desconocido.';
+      toast.error(errorMsg);
     } finally {
       setSubmitting(false);
     }
