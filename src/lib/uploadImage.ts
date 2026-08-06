@@ -1,6 +1,10 @@
 import { supabase } from './supabase';
 
-export const uploadImage = async (file: File, pathFolder: string = 'productos'): Promise<string | null> => {
+export const uploadImage = async (
+  file: File,
+  pathFolder: string = 'productos',
+  bucket: string = 'imagenes'
+): Promise<string | null> => {
   try {
     if (!file) return null;
 
@@ -9,7 +13,7 @@ export const uploadImage = async (file: File, pathFolder: string = 'productos'):
     const filePath = `${pathFolder}/${cleanFileName}`;
 
     const { error } = await supabase.storage
-      .from('imagenes')
+      .from(bucket)
       .upload(filePath, file, {
         cacheControl: '3600',
         upsert: true,
@@ -21,7 +25,7 @@ export const uploadImage = async (file: File, pathFolder: string = 'productos'):
     }
 
     const { data: publicUrlData } = supabase.storage
-      .from('imagenes')
+      .from(bucket)
       .getPublicUrl(filePath);
 
     return publicUrlData.publicUrl;

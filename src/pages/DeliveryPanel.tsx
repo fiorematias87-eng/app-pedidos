@@ -3,15 +3,29 @@ import { CheckCircle2, MapPin, Phone, Smartphone, Truck, MessageCircle } from 'l
 import { toast } from 'sonner';
 import { pedidosService } from '../services/pedidos.service';
 import { supabase } from '../lib/supabase';
+import { uploadImage } from '../lib/uploadImage';
 import { formatCurrency } from '../utils/formatters';
 import type { Pedido, Repartidor } from '../types/delivery';
 import EmptyState from '../components/common/EmptyState';
+
+const getMapsUrl = (direccion: string, localidad: string = 'Florencio Varela') => {
+  const query = encodeURIComponent(`${direccion}, ${localidad}`);
+  return `https://www.google.com/maps/search/?api=1&query=${query}`;
+};
+
+const getWhatsAppUrl = (telefono: string, idPedido: string) => {
+  const numLimpio = telefono.replace(/\D/g, '');
+  const phoneFormatted = numLimpio.startsWith('54') ? numLimpio : `549${numLimpio}`;
+  const mensaje = encodeURIComponent(`¡Hola! Soy el repartidor de Lo de Fiore. Estoy en camino con tu pedido #${idPedido.slice(0, 5)} 🛵`);
+  return `https://wa.me/${phoneFormatted}?text=${mensaje}`;
+};
 
 export default function DeliveryPanel() {
   const [orders, setOrders] = useState<Pedido[]>([]);
   const [repartidores, setRepartidores] = useState<Repartidor[]>([]);
   const [selectedDriverId, setSelectedDriverId] = useState<string>('');
   const [tab, setTab] = useState<'mine' | 'kitchen' | 'peers'>('mine');
+  const [isUploadingAsset, setIsUploadingAsset] = useState(false);
 
   useEffect(() => {
     const load = async () => {
@@ -50,7 +64,7 @@ export default function DeliveryPanel() {
   }, []);
 
   const kitchenCount = useMemo(
-    () => orders.filter((order) => order.estado === 'en_cocina' || order.estado === 'en_preparacion').length,
+    () => orders.filter((order) => order.estado === 'en_preparacion').length,
     [orders]
   );
   const assignedOrders = useMemo(
@@ -59,9 +73,7 @@ export default function DeliveryPanel() {
   );
   const availableOrders = useMemo(
     () => orders.filter(
-      (order) =>
-        (order.estado === 'pendiente' || order.estado === 'en_preparacion') &&
-        !order.repartidor_id
+      (order) => order.estado === 'pendiente' && !order.repartidor_id
     ),
     [orders]
   );
@@ -75,7 +87,40 @@ export default function DeliveryPanel() {
   }, [selectedDriverId]);
 
   const handleDelivery = async (order: Pedido) => {
-    await pedidosService.updatePedido(order.id, { estado: 'entregado', updated_at: new Date().toISOString() });
+    await pedidosService.updatePedido(order.id, { estado: 'completado' });
+  };
+
+  const handleUploadRepartidorAsset = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+    field: 'foto_perfil' | 'foto_portada'
+  ) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!selectedDriver) {
+      toast.error('Seleccioná un repartidor antes de subir una imagen');
+      return;
+    }
+
+    setIsUploadingAsset(true);
+    try {
+      const publicUrl = await uploadImage(file, `repartidores/${selectedDriver.id}/${field}`, 'repartidores_assets');
+      if (!publicUrl) {
+        toast.error('No se pudo subir la imagen. Intentá nuevamente.');
+        return;
+      }
+
+      const updatedDriver = await pedidosService.updateRepartidor(selectedDriver.id, {
+        [field]: publicUrl,
+      });
+      setRepartidores((prev) => prev.map((driver) => (driver.id === selectedDriver.id ? updatedDriver : driver)));
+      toast.success('Imagen cargada y perfil actualizado ✅');
+    } catch (error) {
+      console.error('Error subiendo activo de repartidor:', error);
+      toast.error('Error al subir la imagen del repartidor');
+    } finally {
+      setIsUploadingAsset(false);
+      event.target.value = '';
+    }
   };
 
   const handleTakeOrder = async (order: Pedido) => {
@@ -87,7 +132,6 @@ export default function DeliveryPanel() {
     await pedidosService.updatePedido(order.id, {
       repartidor_id: selectedDriverId,
       estado: 'en_camino',
-      updated_at: new Date().toISOString(),
     });
   };
 
@@ -95,26 +139,74 @@ export default function DeliveryPanel() {
     <div className="min-h-screen bg-gradient-to-b from-slate-950 to-slate-900 text-slate-100 p-4">
       <div className="mx-auto w-full max-w-md">
         {/* Header */}
-        <div className="rounded-3xl border border-slate-800 bg-slate-900/90 p-4 shadow-lg shadow-slate-950/50">
-          <div className="mb-3">
-            <p className="text-xs uppercase tracking-[0.2em] text-cyan-400 font-semibold">Repartidor</p>
-            <h1 className="mt-1 text-xl font-bold text-white">
-              👋 Hola, {selectedDriver?.nombre || 'Selecciona un repartidor'}
-            </h1>
-          </div>
+        <div className="overflow-hidden rounded-3xl border border-slate-800 bg-slate-900/90 shadow-lg shadow-slate-950/50">
+          {selectedDriver?.foto_portada ? (
+            <div
+              className="h-40 bg-cover bg-center"
+              style={{ backgroundImage: `url(${selectedDriver.foto_portada})` }}
+            />
+          ) : (
+            <div className="h-40 bg-gradient-to-r from-slate-800 via-slate-900 to-slate-950" />
+          )}
+          <div className="p-4">
+            <div className="flex items-center gap-4">
+              <div className="relative h-20 w-20 overflow-hidden rounded-3xl border-2 border-slate-700 bg-slate-950">
+                {selectedDriver?.foto_perfil ? (
+                  <img
+                    src={selectedDriver.foto_perfil}
+                    alt={`${selectedDriver.nombre} perfil`}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <div className="flex h-full items-center justify-center bg-slate-800 text-3xl text-slate-400">
+                    👤
+                  </div>
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs uppercase tracking-[0.2em] text-cyan-400 font-semibold">Repartidor</p>
+                <h1 className="mt-1 text-xl font-bold text-white">
+                  Hola, {selectedDriver?.nombre || 'Selecciona un repartidor'}
+                </h1>
+                <p className="text-sm text-slate-400">{selectedDriver?.telefono || 'Activo para recibir pedidos'}</p>
+              </div>
+            </div>
 
-          <select
-            value={selectedDriverId}
-            onChange={(e) => setSelectedDriverId(e.target.value)}
-            className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm font-semibold text-white outline-none transition focus:border-cyan-500"
-          >
-            <option value="">-- Selecciona repartidor --</option>
-            {repartidores.map((driver) => (
-              <option key={driver.id} value={driver.id}>
-                {driver.nombre}
-              </option>
-            ))}
-          </select>
+            <div className="mt-4 grid gap-2 sm:grid-cols-2">
+              <label className="group flex cursor-pointer items-center justify-center rounded-2xl border border-slate-700 bg-slate-950/90 px-4 py-3 text-center text-sm font-semibold text-slate-200 transition hover:border-cyan-500">
+                Foto de Perfil
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => void handleUploadRepartidorAsset(e, 'foto_perfil')}
+                />
+              </label>
+              <label className="group flex cursor-pointer items-center justify-center rounded-2xl border border-slate-700 bg-slate-950/90 px-4 py-3 text-center text-sm font-semibold text-slate-200 transition hover:border-cyan-500">
+                Foto de Portada
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => void handleUploadRepartidorAsset(e, 'foto_portada')}
+                />
+              </label>
+            </div>
+            {isUploadingAsset ? <p className="mt-3 text-sm text-slate-400">Subiendo imagen...</p> : null}
+
+            <select
+              value={selectedDriverId}
+              onChange={(e) => setSelectedDriverId(e.target.value)}
+              className="mt-4 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm font-semibold text-white outline-none transition focus:border-cyan-500"
+            >
+              <option value="">-- Selecciona repartidor --</option>
+              {repartidores.map((driver) => (
+                <option key={driver.id} value={driver.id}>
+                  {driver.nombre}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {/* Tabs */}
@@ -136,36 +228,95 @@ export default function DeliveryPanel() {
               <div className="space-y-3">
                 {assignedOrders.length ? (
                   assignedOrders.map((order, idx) => (
-                    <div key={order.id} className="overflow-hidden rounded-3xl border-2 border-slate-700 bg-slate-900/80 shadow-lg transition hover:border-cyan-600 hover:shadow-cyan-500/20">
-                      <div className="border-b border-slate-800 bg-gradient-to-r from-slate-800 to-slate-900 px-4 py-3">
-                        <div className="flex items-center justify-between">
-                          <span className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-cyan-600 text-xs font-bold text-white">{idx + 1}</span>
-                          <span className="text-sm font-bold text-slate-300">Pedido #{order.id?.slice(0, 8)}</span>
-                        </div>
-                      </div>
-
-                      <div className="border-b border-slate-800 bg-slate-950/60 px-4 py-3">
-                        <div className="flex items-start gap-2">
-                          <MapPin className="h-5 w-5 text-cyan-400 flex-shrink-0 mt-0.5" />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-semibold text-white break-words">{order.cliente_direccion}</p>
-                            <div className="mt-2 flex gap-2">
-                              <button onClick={() => window.open(`https://maps.google.com/?q=${encodeURIComponent(order.cliente_direccion)}`, '_blank')} className="inline-flex items-center gap-1 rounded-lg bg-cyan-600 px-3 py-2 text-xs font-semibold text-white">🗺️ Abrir Maps</button>
-                              <button onClick={() => { void handleDelivery(order); }} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white">✅ Marcar Entregado</button>
-                            </div>
+                    <div key={order.id} className="overflow-hidden rounded-3xl border border-slate-700 bg-slate-950/90 shadow-lg transition hover:border-cyan-600 hover:shadow-cyan-500/20">
+                      <div className="border-b border-slate-800 bg-slate-900/80 px-4 py-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.2em] text-cyan-400">Pedido</p>
+                            <p className="text-sm font-semibold text-white">#{order.id?.slice(0, 8)}</p>
                           </div>
+                          <span className="rounded-full bg-cyan-500/10 px-3 py-1 text-xs font-semibold text-cyan-300">En camino</span>
                         </div>
+                        <p className="mt-3 text-sm text-slate-300">{order.cliente_nombre}</p>
+                        <p className="mt-1 text-sm font-semibold text-white">{order.cliente_direccion}</p>
                       </div>
 
-                      <div className="px-4 py-3 bg-slate-950/70 text-sm text-slate-400 max-h-24 overflow-y-auto">
-                        <p className="text-xs uppercase tracking-[0.1em] text-slate-500 mb-2">📦 Productos</p>
-                        <div className="space-y-1">
-                          {order.items.map((p, i) => (
-                            <div key={i} className="flex items-center justify-between gap-2">
-                              <span>{p.cantidad}× {p.nombre}</span>
-                              <span className="text-xs text-slate-500">{formatCurrency(p.precio * p.cantidad)}</span>
+                      <div className="border-b border-slate-800 bg-slate-950/75 px-4 py-4">
+                        <p className="text-xs uppercase tracking-[0.1em] text-slate-500">Productos</p>
+                        <div className="mt-3 flex gap-3 overflow-x-auto pb-1">
+                          {order.items.map((product, itemIndex) => (
+                            <div key={itemIndex} className="min-w-[170px] rounded-3xl border border-slate-800 bg-slate-900 p-3 shadow-sm">
+                              <div className="h-20 w-full overflow-hidden rounded-2xl bg-slate-800">
+                                {product.imagen_url ? (
+                                  <img src={product.imagen_url} alt={product.nombre} className="h-full w-full object-cover" />
+                                ) : (
+                                  <div className="flex h-full items-center justify-center text-xs uppercase tracking-[0.15em] text-slate-500">Sin imagen</div>
+                                )}
+                              </div>
+                              <div className="mt-3 space-y-2 text-xs text-slate-300">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-semibold text-white">{product.nombre}</span>
+                                  <span className="rounded-full bg-slate-800 px-2 py-1 text-[10px] text-slate-400">{product.cantidad}x</span>
+                                </div>
+                                <div className="text-right text-slate-400">{formatCurrency(product.precio * product.cantidad)}</div>
+                              </div>
                             </div>
                           ))}
+                        </div>
+                      </div>
+
+                      <div className="space-y-3 px-4 py-4">
+                        <div className={`rounded-3xl px-4 py-3 text-sm ${order.metodo_pago === 'efectivo' ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-100' : 'bg-sky-500/10 border border-sky-500/20 text-sky-100'}`}>
+                          <p className="font-semibold">{order.metodo_pago === 'efectivo' ? 'Cobro en efectivo' : 'Pago ya realizado'}</p>
+                          <p className="text-slate-300">Total: {formatCurrency(order.total)}</p>
+                          {order.metodo_pago === 'efectivo' ? (
+                            <p className="text-slate-200">Vuelto: {formatCurrency(Math.max(0, Number(order.paga_con || '0') - order.total))}</p>
+                          ) : (
+                            <p className="text-slate-200">Transferencia / Mercado Pago</p>
+                          )}
+                        </div>
+
+                        {order.notas ? (
+                          <div className="rounded-3xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                            <p className="font-semibold text-amber-200">Observaciones</p>
+                            <p className="mt-1 text-slate-100">{order.notas}</p>
+                          </div>
+                        ) : null}
+
+                        <div className="grid gap-2">
+                          <a
+                            href={getMapsUrl(order.cliente_direccion)}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center justify-center rounded-2xl bg-slate-800 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-700"
+                          >
+                            🗺️ GPS
+                          </a>
+                          {order.cliente_telefono ? (
+                            <a
+                              href={getWhatsAppUrl(order.cliente_telefono, order.id)}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center justify-center rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-emerald-500"
+                            >
+                              💬 WhatsApp
+                            </a>
+                          ) : null}
+                          {order.cliente_telefono ? (
+                            <a
+                              href={`tel:${order.cliente_telefono}`}
+                              className="inline-flex items-center justify-center rounded-2xl bg-slate-800 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-700"
+                            >
+                              📞 Llamar
+                            </a>
+                          ) : null}
+                          <button
+                            type="button"
+                            onClick={() => { void handleDelivery(order); }}
+                            className="inline-flex items-center justify-center rounded-2xl bg-cyan-600 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-500"
+                          >
+                            ✅ Marcar Completado
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -180,7 +331,7 @@ export default function DeliveryPanel() {
               </div>
             ) : tab === 'kitchen' ? (
               <div className="space-y-3">
-                {orders.filter(o => o.estado === 'pendiente' || o.estado === 'en_preparacion').map((order) => (
+                {orders.filter(o => o.estado === 'en_preparacion').map((order) => (
                   <div key={order.id} className="rounded-2xl border border-slate-800 bg-slate-900/80 p-3">
                     <div className="flex items-center justify-between">
                       <div>
@@ -192,6 +343,12 @@ export default function DeliveryPanel() {
                         <p className="font-bold text-white">{formatCurrency(order.total)}</p>
                       </div>
                     </div>
+                    {order.notas ? (
+                      <div className="mt-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                        <p className="font-semibold text-amber-200">Observaciones</p>
+                        <p className="mt-1 text-slate-200">{order.notas}</p>
+                      </div>
+                    ) : null}
                   </div>
                 ))}
               </div>

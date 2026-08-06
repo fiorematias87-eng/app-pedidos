@@ -72,7 +72,7 @@ export default function DriverManager({
   // Calcular métricas por repartidor
   const getDriverMetrics = (driverId: string) => {
     const assigned = orders.filter((o) => o.repartidor_id === driverId && o.estado === 'en_camino').length;
-    const delivered = orders.filter((o) => o.repartidor_id === driverId && o.estado === 'entregado').length;
+    const delivered = orders.filter((o) => o.repartidor_id === driverId && o.estado === 'completado').length;
     return { assigned, delivered };
   };
 

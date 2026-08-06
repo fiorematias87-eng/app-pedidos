@@ -110,14 +110,24 @@ export default function OrderCard({
         {/* Detalle de productos (oculto por defecto) */}
         {showDetails ? (
           <div className="rounded-lg bg-slate-900/80 p-2 border border-slate-800 max-h-[120px] overflow-y-auto text-[10px] text-slate-400 space-y-0.5">
-            {order.items?.map((p, idx) => (
-              <div key={idx} className="flex justify-between gap-2">
-                <span>
-                  {p.cantidad}× {p.nombre}
-                </span>
-                <span className="text-slate-500">{formatCurrency(p.precio * p.cantidad)}</span>
-              </div>
-            ))}
+            {order.items?.map((p, idx) => {
+              const imgUrl = (p as any).imagen_url || (p as any).producto?.imagen_url || null;
+              return (
+                <div key={idx} className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="h-8 w-8 flex-shrink-0 overflow-hidden rounded-lg bg-slate-800">
+                      {imgUrl ? (
+                        <img src={imgUrl} alt={p.nombre} className="h-full w-full object-cover" />
+                      ) : (
+                        <div className="flex h-full items-center justify-center text-xs text-slate-500">—</div>
+                      )}
+                    </div>
+                    <span className="truncate">{p.cantidad}× {p.nombre}</span>
+                  </div>
+                  <span className="text-slate-500">{formatCurrency(p.precio * p.cantidad)}</span>
+                </div>
+              );
+            })}
           </div>
         ) : null}
       </div>
@@ -135,18 +145,7 @@ export default function OrderCard({
           </button>
         ) : null}
 
-        {order.estado === 'en_preparacion' && onAdvanceStatus ? (
-          <button
-            type="button"
-            onClick={() => void onAdvanceStatus(order, 'en_cocina')}
-            className="w-full flex items-center justify-center gap-1.5 rounded-lg bg-orange-500 px-2 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-orange-400"
-          >
-            <ArrowRight className="h-3.5 w-3.5" />
-            Listo para Empaque
-          </button>
-        ) : null}
-
-        {order.estado === 'en_cocina' && onAssignDriver ? (
+        {order.estado === 'en_preparacion' && onAssignDriver ? (
           <div className="space-y-2">
             <div className="space-y-1">
               <select
@@ -202,7 +201,7 @@ export default function OrderCard({
           </div>
         ) : null}
 
-        {order.estado === 'entregado' && onFinalize ? (
+        {order.estado === 'completado' && onFinalize ? (
           <div className="rounded-lg bg-emerald-500/10 border border-emerald-600/50 px-2 py-1.5 text-xs text-emerald-200">
             <p className="font-semibold">✅ {getAssignedDriverName(order)}</p>
           </div>

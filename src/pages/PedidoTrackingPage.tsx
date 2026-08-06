@@ -7,16 +7,16 @@ import type { Pedido } from '../types/delivery';
 
 const steps = [
   { key: 'pendiente', label: 'Pendiente', icon: Clock3 },
-  { key: 'preparando', label: 'En Preparación', icon: Circle },
+  { key: 'en_preparacion', label: 'En Preparación', icon: Circle },
   { key: 'en_camino', label: 'En Camino', icon: Truck },
-  { key: 'entregado', label: 'Entregado', icon: CheckCircle2 },
+  { key: 'completado', label: 'Completado', icon: CheckCircle2 },
 ] as const;
 
 const statusOrder: Record<string, number> = {
   pendiente: 0,
-  preparando: 1,
+  en_preparacion: 1,
   en_camino: 2,
-  entregado: 3,
+  completado: 3,
 };
 
 const formatCurrency = (value: number) =>

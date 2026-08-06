@@ -1,11 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { BellRing, ChevronDown, ChevronUp, CircleDollarSign, ClipboardList, ImageIcon, Landmark, Loader2, PackageCheck, Sparkles, Truck, UserRound, Wallet } from 'lucide-react';
+import { BellRing, ChevronDown, ChevronUp, CircleDollarSign, ClipboardList, ImageIcon, Landmark, Loader2, PackageCheck, Sparkles, Truck, UserRound, Wallet, Plus, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { pedidosService } from '../services/pedidos.service';
 import { uploadImage } from '../lib/uploadImage';
 import { supabase } from '../lib/supabase';
 import KanbanOrders from '../components/admin/KanbanOrders';
-import DriverManager from '../components/admin/DriverManager';
 import type { Categoria, EstadoPedido, Pedido, Producto, Repartidor, TiendaConfig } from '../types/delivery';
 
 const initialConfig: TiendaConfig = {
@@ -350,6 +349,8 @@ export default function AdminPanel() {
   const [uploadingField, setUploadingField] = useState<string | null>(null);
   const [savingConfigSection, setSavingConfigSection] = useState<'brand' | 'bank' | null>(null);
   const [creatingProduct, setCreatingProduct] = useState(false);
+  const [showDriverModal, setShowDriverModal] = useState(false);
+  const [driverForm, setDriverForm] = useState({ nombre: '', telefono: '' });
 
   const fetchStoreConfig = async () => {
     const { data, error } = await supabase.from('tienda_config').select('*').eq('id', 'store').single();
@@ -428,7 +429,7 @@ export default function AdminPanel() {
         setRepartidores(driversData as Repartidor[]);
       }
 
-      const pedidos = await pedidosService.getPedidos();
+      const pedidos = await pedidosService.getPedidosForAdmin();
       setOrders(pedidos);
     };
 
@@ -530,8 +531,8 @@ export default function AdminPanel() {
     });
   }, [products, search, selectedCategory]);
 
-  const ventasHoy = orders.filter((order) => order.estado !== 'cancelado').reduce((sum, order) => sum + order.total, 0);
-  const pedidosHoy = orders.filter((order) => order.estado !== 'cancelado').length;
+  const ventasHoy = orders.filter((order) => order.estado !== 'completado').reduce((sum, order) => sum + order.total, 0);
+  const pedidosHoy = orders.filter((order) => order.estado !== 'completado').length;
   const ticketPromedio = pedidosHoy ? Math.round(ventasHoy / pedidosHoy) : 0;
 
   const persistConfig = async (nextConfig: TiendaConfig) => {
@@ -942,15 +943,52 @@ export default function AdminPanel() {
   };
 
   const handleStatusChange = async (order: Pedido, next: EstadoPedido) => {
-    await pedidosService.updatePedido(order.id, { estado: next, updated_at: new Date().toISOString() });
+    const original = orders.find((item) => item.id === order.id);
+    const optimistic = { ...order, estado: next, updated_at: new Date().toISOString() };
+    setOrders((prev) => prev.map((item) => (item.id === order.id ? optimistic : item)));
+
+    try {
+      await pedidosService.updatePedido(order.id, { estado: next });
+      toast.success('Estado actualizado');
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
+      console.error('Error detallado de Supabase:', error);
+      alert(`Error al cambiar estado: ${errorMessage}`);
+      toast.error(`No se pudo actualizar el estado: ${errorMessage}`);
+      if (original) {
+        setOrders((prev) => prev.map((item) => (item.id === order.id ? original : item)));
+      }
+    }
   };
 
   const handleAssignDriver = async (order: Pedido, repartidorId: string) => {
     if (!repartidorId) return;
-    await pedidosService.updatePedido(order.id, {
+    const driver = repartidores.find((item) => item.id === repartidorId);
+    const original = orders.find((item) => item.id === order.id);
+    const optimistic = {
+      ...order,
       repartidor_id: repartidorId,
+      repartidor_nombre: driver?.nombre || order.repartidor_nombre || null,
+      estado: 'en_camino' as EstadoPedido,
       updated_at: new Date().toISOString(),
-    });
+    };
+    setOrders((prev) => prev.map((item) => (item.id === order.id ? optimistic : item)));
+
+    try {
+      await pedidosService.updatePedido(order.id, {
+        estado: 'en_camino',
+        repartidor_id: repartidorId,
+      });
+      toast.success('Repartidor asignado');
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
+      console.error('Error detallado de Supabase:', error);
+      alert(`Error al asignar repartidor: ${errorMessage}`);
+      toast.error(`No se pudo asignar el repartidor: ${errorMessage}`);
+      if (original) {
+        setOrders((prev) => prev.map((item) => (item.id === order.id ? original : item)));
+      }
+    }
   };
 
   const handleAssignAndSend = async (order: Pedido, repartidorId: string) => {
@@ -958,21 +996,31 @@ export default function AdminPanel() {
       toast.error('Elegí un repartidor para enviar el pedido');
       return;
     }
-    // Optimistic update: move locally first, then persist. Revert on failure.
-    const original = orders.find((o) => o.id === order.id);
-    setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, repartidor_id: repartidorId, estado: 'en_camino', updated_at: new Date().toISOString() } : o)));
+
+    const driver = repartidores.find((item) => item.id === repartidorId);
+    const original = orders.find((item) => item.id === order.id);
+    const optimistic = {
+      ...order,
+      repartidor_id: repartidorId,
+      repartidor_nombre: driver?.nombre || null,
+      estado: 'en_camino' as EstadoPedido,
+      updated_at: new Date().toISOString(),
+    };
+
+    setOrders((prev) => prev.map((item) => (item.id === order.id ? optimistic : item)));
     try {
       await pedidosService.updatePedido(order.id, {
         estado: 'en_camino',
         repartidor_id: repartidorId,
-        updated_at: new Date().toISOString(),
       });
       toast.success('Pedido enviado al repartidor ✅');
-    } catch (err) {
-      console.error('Error asignando repartidor:', err);
-      toast.error('No se pudo asignar el repartidor. Revirtiendo...');
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
+      console.error('Error detallado de Supabase:', error);
+      alert(`Error al enviar pedido: ${errorMessage}`);
+      toast.error(`No se pudo asignar el repartidor. Revirtiendo... ${errorMessage}`);
       if (original) {
-        setOrders((prev) => prev.map((o) => (o.id === order.id ? original : o)));
+        setOrders((prev) => prev.map((item) => (item.id === order.id ? original : item)));
       }
     }
   };
@@ -1009,6 +1057,31 @@ export default function AdminPanel() {
 
   const toggleSection = (key: string) => setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
 
+  const handleCreateDriverFromModal = async () => {
+    if (!driverForm.nombre.trim()) {
+      toast.error('Ingresá el nombre del repartidor');
+      return;
+    }
+
+    try {
+      await handleCreateDriver({ nombre: driverForm.nombre.trim(), telefono: driverForm.telefono.trim(), estado: 'disponible' });
+      setDriverForm({ nombre: '', telefono: '' });
+      setShowDriverModal(false);
+      toast.success('Repartidor agregado');
+    } catch {
+      toast.error('No se pudo crear el repartidor');
+    }
+  };
+
+  const handleDeleteDriverFromModal = async (driverId: string) => {
+    try {
+      await handleDeleteDriver(driverId);
+      toast.success('Repartidor eliminado');
+    } catch {
+      toast.error('No se pudo eliminar el repartidor');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#020617] text-slate-100">
       <style>{`
@@ -1040,9 +1113,19 @@ export default function AdminPanel() {
               <p className="text-sm uppercase tracking-[0.3em] text-cyan-400">Panel de administración</p>
               <h1 className="mt-1 text-2xl font-semibold text-white">Lo de Fiore • Centro de control</h1>
             </div>
-            <div className={`flex items-center gap-2 rounded-full border border-slate-700 px-3 py-2 ${pulse ? 'bg-amber-500/10' : 'bg-slate-900'}`}>
-              <BellRing className="h-4 w-4 text-amber-400" />
-              <span className="text-sm text-slate-300">Actualización en vivo</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowDriverModal(true)}
+                className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200 transition hover:bg-slate-800"
+              >
+                <Truck className="h-4 w-4 text-cyan-400" />
+                Repartidores
+              </button>
+              <div className={`flex items-center gap-2 rounded-full border border-slate-700 px-3 py-2 ${pulse ? 'bg-amber-500/10' : 'bg-slate-900'}`}>
+                <BellRing className="h-4 w-4 text-amber-400" />
+                <span className="text-sm text-slate-300">Actualización en vivo</span>
+              </div>
             </div>
           </div>
 
@@ -1059,16 +1142,54 @@ export default function AdminPanel() {
             })}
           </div>
 
-          {/* MANAGER DE REPARTIDORES - TOP LEVEL */}
-          <div className="mt-6 mb-6">
-            <DriverManager
-              repartidores={repartidores}
-              orders={orders}
-              onAddDriver={handleCreateDriver}
-              onEditDriver={handleUpdateDriver}
-              onDeleteDriver={handleDeleteDriver}
-            />
-          </div>
+          {showDriverModal ? (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-3">
+              <div className="w-full max-w-md rounded-3xl border border-slate-800 bg-slate-900 p-4 shadow-2xl">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-white">Gestión de repartidores</p>
+                    <p className="text-xs text-slate-400">Agregá, revisá o borrá conductores</p>
+                  </div>
+                  <button type="button" onClick={() => setShowDriverModal(false)} className="rounded-full bg-slate-800 p-2 text-slate-300">
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Agregar nuevo</p>
+                    <div className="space-y-2">
+                      <input value={driverForm.nombre} onChange={(e) => setDriverForm((prev) => ({ ...prev, nombre: e.target.value }))} placeholder="Nombre" className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none" />
+                      <input value={driverForm.telefono} onChange={(e) => setDriverForm((prev) => ({ ...prev, telefono: e.target.value }))} placeholder="Teléfono" className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none" />
+                      <button type="button" onClick={() => void handleCreateDriverFromModal()} className="flex w-full items-center justify-center gap-2 rounded-xl bg-cyan-600 px-3 py-2 text-sm font-semibold text-white">
+                        <Plus className="h-4 w-4" />
+                        Agregar repartidor
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Listado actual</p>
+                    <div className="space-y-2">
+                      {repartidores.length === 0 ? (
+                        <p className="text-sm text-slate-500">No hay repartidores cargados.</p>
+                      ) : repartidores.map((driver) => (
+                        <div key={driver.id} className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-900 px-3 py-2">
+                          <div>
+                            <p className="text-sm font-semibold text-white">{driver.nombre}</p>
+                            <p className="text-xs text-slate-400">{driver.telefono || 'Sin teléfono'}</p>
+                          </div>
+                          <button type="button" onClick={() => void handleDeleteDriverFromModal(driver.id)} className="rounded-lg bg-rose-500/15 px-2 py-1 text-xs font-semibold text-rose-300">
+                            Borrar
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
 
 <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/70 overflow-hidden">
               <button onClick={() => toggleSection('pedidos')} className="flex w-full items-center justify-between px-4 py-4 text-left text-white">
@@ -1081,10 +1202,9 @@ export default function AdminPanel() {
           <div className="mt-6 space-y-3">
             {[
               { key: 'comercio', title: '👤 Información del comercio', icon: UserRound, content: <div className="grid gap-3 md:grid-cols-2"><div className="space-y-3"><input value={config.nombre} onChange={(e) => setConfig({ ...config, nombre: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="Nombre" /><textarea value={config.descripcion || ''} onChange={(e) => setConfig({ ...config, descripcion: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="Descripción" /><input value={config.subtitulo || ''} onChange={(e) => setConfig({ ...config, subtitulo: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="Subtítulo / categoría" /><input value={config.direccion || ''} onChange={(e) => setConfig({ ...config, direccion: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="Dirección" /><input value={config.telefono || ''} onChange={(e) => setConfig({ ...config, telefono: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="Teléfono" /><button onClick={() => void handleSaveBrandingConfig()} className="flex items-center justify-center gap-2 rounded-2xl bg-cyan-500 px-4 py-3 text-sm font-semibold text-slate-950">{savingConfigSection === 'brand' ? <><Loader2 className="h-4 w-4 animate-spin" />Guardando...</> : 'Guardar Cambios'}</button></div><div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 text-sm text-slate-400">Actualizá la identidad del comercio para que quede visible en la tienda y en la vista de delivery.</div></div> },
-              { key: 'identidad', title: '📸 Identidad visual e imágenes', icon: ImageIcon, content: <div className="grid gap-3 md:grid-cols-2"><label className="rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm"><span className="mb-2 block text-slate-400">Logo del comercio</span><input type="file" accept="image/*" onChange={(e) => void handleUpload('logo_url', e.target.files?.[0] || null)} className="w-full text-slate-300" />{uploadingField === 'logo_url' ? <div className="mt-2 flex items-center gap-2 text-cyan-400"><Loader2 className="h-4 w-4 animate-spin" />Subiendo imagen...</div> : null}{config.logo_url ? <img src={config.logo_url} alt="Preview logo" className="mt-3 h-20 w-full rounded-2xl object-cover" /> : null}</label><label className="rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm"><span className="mb-2 block text-slate-400">Portada</span><input type="file" accept="image/*" onChange={(e) => void handleUpload('portada_url', e.target.files?.[0] || null)} className="w-full text-slate-300" />{uploadingField === 'portada_url' ? <div className="mt-2 flex items-center gap-2 text-cyan-400"><Loader2 className="h-4 w-4 animate-spin" />Subiendo imagen...</div> : null}{config.portada_url ? <img src={config.portada_url} alt="Preview portada" className="mt-3 h-24 w-full rounded-2xl object-cover" /> : null}</label><div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 text-sm text-slate-400">Subí imágenes reales desde tu computadora. Se actualizarán automáticamente en la tienda y en la vista de delivery.</div></div> },
-              { key: 'cuentas', title: '💳 Cuentas de transferencia', icon: Landmark, content: <div className="grid gap-3 md:grid-cols-2"><input value={config.banco || ''} onChange={(e) => setConfig({ ...config, banco: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="Banco" /><input value={config.titular_nombre || ''} onChange={(e) => setConfig({ ...config, titular_nombre: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="Titular" /><input value={config.titular_cuit || ''} onChange={(e) => setConfig({ ...config, titular_cuit: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="CUIT / CUIL" /><input value={config.alias || ''} onChange={(e) => setConfig({ ...config, alias: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="Alias" /><input value={config.cbu_cvu || ''} onChange={(e) => setConfig({ ...config, cbu_cvu: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="CBU / CVU" /><button onClick={() => void handleSaveBankConfig()} className="flex items-center justify-center gap-2 rounded-2xl bg-amber-400 px-4 py-3 text-sm font-semibold text-slate-950">{savingConfigSection === 'bank' ? <><Loader2 className="h-4 w-4 animate-spin" />Guardando...</> : 'Guardar Cambios'}</button></div> },
               { key: 'categorias', title: '📚 Estructura de secciones (categorías)', icon: PackageCheck, content: <div className="space-y-3"><div className="flex gap-2"><input value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className="flex-1 rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="Agregar categoría" /><button onClick={handleCreateCategory} className="rounded-2xl bg-cyan-500 px-4 py-3 text-sm font-semibold text-slate-950">Agregar</button></div><div className="space-y-2">{categories.map((category, index) => <div key={category.id} className="flex items-center justify-between rounded-2xl border border-slate-800 bg-slate-900/70 px-3 py-3 text-sm"><div className="flex items-center gap-2"><span>{['🍕','🥟','🍔'][index % 3]}</span><span>{category.nombre}</span></div><div className="flex gap-2"><button onClick={() => { setEditingCategoryId(category.id); setEditingCategoryName(category.nombre); }} className="rounded-full bg-slate-800 px-3 py-1 text-xs">Editar</button><button onClick={() => { void handleDeleteCategory(category.id); }} className="rounded-full bg-rose-500/15 px-3 py-1 text-xs text-rose-300">Eliminar</button></div></div>)}</div>{editingCategoryId ? <div className="flex gap-2"><input value={editingCategoryName} onChange={(e) => setEditingCategoryName(e.target.value)} className="flex-1 rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" /><button onClick={() => { void handleUpdateCategory(editingCategoryId, editingCategoryName); }} className="rounded-2xl bg-amber-400 px-4 py-3 text-sm font-semibold text-slate-950">Guardar</button></div> : null}</div> },
               { key: 'productos', title: '🛍️ Gestión de productos', icon: Sparkles, content: <ProductSection categories={categories} products={products} filteredProducts={filteredProducts} search={search} selectedCategory={selectedCategory} setSearch={setSearch} setSelectedCategory={setSelectedCategory} newProduct={newProduct} setNewProduct={setNewProduct} editingProduct={editingProduct} setEditingProduct={setEditingProduct} editingProductId={editingProductId} setEditingProductId={setEditingProductId} currentProductImage={currentProductImage} setCurrentProductImage={setCurrentProductImage} editingProductFile={editingProductFile} setEditingProductFile={setEditingProductFile} handleSaveProducto={handleSaveProducto} handleDeleteProduct={handleDeleteProduct} handleToggleProduct={handleToggleProduct} handleUpload={handleUpload} uploadingField={uploadingField} handleNuevoProductoBtn={handleNuevoProductoBtn} /> },
+              { key: 'configuracion', title: '⚙️ Configuración de tienda', icon: Landmark, content: <div className="grid gap-3 md:grid-cols-2"><div className="space-y-3"><label className="rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm"><span className="mb-2 block text-slate-400">Logo del comercio</span><input type="file" accept="image/*" onChange={(e) => void handleUpload('logo_url', e.target.files?.[0] || null)} className="w-full text-slate-300" />{uploadingField === 'logo_url' ? <div className="mt-2 flex items-center gap-2 text-cyan-400"><Loader2 className="h-4 w-4 animate-spin" />Subiendo imagen...</div> : null}{config.logo_url ? <img src={config.logo_url} alt="Preview logo" className="mt-3 h-20 w-full rounded-2xl object-cover" /> : null}</label><label className="rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm"><span className="mb-2 block text-slate-400">Portada</span><input type="file" accept="image/*" onChange={(e) => void handleUpload('portada_url', e.target.files?.[0] || null)} className="w-full text-slate-300" />{uploadingField === 'portada_url' ? <div className="mt-2 flex items-center gap-2 text-cyan-400"><Loader2 className="h-4 w-4 animate-spin" />Subiendo imagen...</div> : null}{config.portada_url ? <img src={config.portada_url} alt="Preview portada" className="mt-3 h-24 w-full rounded-2xl object-cover" /> : null}</label></div><div className="space-y-3"><input value={config.banco || ''} onChange={(e) => setConfig({ ...config, banco: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="Banco" /><input value={config.titular_nombre || ''} onChange={(e) => setConfig({ ...config, titular_nombre: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="Titular" /><input value={config.titular_cuit || ''} onChange={(e) => setConfig({ ...config, titular_cuit: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="CUIT / CUIL" /><input value={config.alias || ''} onChange={(e) => setConfig({ ...config, alias: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="Alias" /><input value={config.cbu_cvu || ''} onChange={(e) => setConfig({ ...config, cbu_cvu: e.target.value })} className="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-3 text-sm outline-none" placeholder="CBU / CVU" /><button onClick={() => void handleSaveBankConfig()} className="flex items-center justify-center gap-2 rounded-2xl bg-amber-400 px-4 py-3 text-sm font-semibold text-slate-950">{savingConfigSection === 'bank' ? <><Loader2 className="h-4 w-4 animate-spin" />Guardando...</> : 'Guardar Cambios'}</button></div></div> },
             ].map((section) => {
               const Icon = section.icon;
               const isOpen = expanded[section.key];

@@ -13,7 +13,12 @@ RENAME COLUMN IF EXISTS envio TO costo_envio;
 ALTER TABLE pedidos 
 RENAME COLUMN IF EXISTS productos TO items;
 
--- Actualizar el check constraint para cambiar estado 'preparando' a 'en_cocina'
+-- Agregar columnas de imagen al repartidor si no existen
+ALTER TABLE repartidores
+  ADD COLUMN IF NOT EXISTS foto_perfil text,
+  ADD COLUMN IF NOT EXISTS foto_portada text;
+
+-- Actualizar el check constraint para usar los estados modernos
 -- Primero, eliminar el constraint existente
 ALTER TABLE pedidos 
 DROP CONSTRAINT IF EXISTS pedidos_estado_check;
@@ -21,4 +26,4 @@ DROP CONSTRAINT IF EXISTS pedidos_estado_check;
 -- Luego agregar el nuevo constraint
 ALTER TABLE pedidos 
 ADD CONSTRAINT pedidos_estado_check 
-CHECK (estado in ('pendiente','en_cocina','en_camino','entregado','cancelado'));
+CHECK (estado in ('pendiente','en_preparacion','en_camino','completado'));

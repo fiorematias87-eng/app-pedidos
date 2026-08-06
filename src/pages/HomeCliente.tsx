@@ -246,17 +246,12 @@ export default function HomeCliente() {
       let shouldOpenWhatsApp = false;
 
       try {
-        const { data, error } = await supabase.from('pedidos').insert([pedidoData]).select();
-        if (error) {
-          console.error('Error al guardar el pedido en Supabase:', error);
-        } else if (!data || data.length === 0) {
-          console.error('La inserción en Supabase no devolvió pedido guardado.');
-        } else {
-          toast.success(`Pedido guardado #${data[0]?.id?.slice(0, 8) || 'OK'}`);
-        }
+        const created = await pedidosService.createPedido(pedidoData);
+        toast.success(`Pedido guardado #${created.id?.slice(0, 8) || 'OK'}`);
         shouldOpenWhatsApp = true;
       } catch (insertError) {
         console.error('Excepción al guardar el pedido en Supabase:', insertError);
+        toast.error('No se pudo guardar el pedido. Intenta nuevamente.');
         shouldOpenWhatsApp = true;
       }
 

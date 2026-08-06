@@ -32,6 +32,8 @@ create table if not exists repartidores (
   id uuid primary key default gen_random_uuid(),
   nombre text not null,
   telefono text,
+  foto_perfil text,
+  foto_portada text,
   estado text not null default 'disponible' check (estado in ('disponible','ocupado','inactivo'))
 );
 
