@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { ArrowRight, ChevronDown, ChevronUp, Truck } from 'lucide-react';
+import React from 'react';
+import { ArrowRight, Truck } from 'lucide-react';
 import type { Pedido, Repartidor } from '../../types/delivery';
 
 type OrderCardProps = {
@@ -29,7 +29,30 @@ export default function OrderCard({
   assignDriverSelection,
   setAssignDriverSelection,
 }: OrderCardProps) {
-  const [showDetails, setShowDetails] = useState(false);
+  const getDelayBadge = (createdAt: string) => {
+    const minutes = Math.max(0, Math.floor((Date.now() - new Date(createdAt).getTime()) / 60000));
+
+    if (minutes < 10) {
+      return {
+        label: `${minutes}m`,
+        className: 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200',
+      };
+    }
+
+    if (minutes < 20) {
+      return {
+        label: `${minutes}m`,
+        className: 'border-amber-500/40 bg-amber-500/15 text-amber-200',
+      };
+    }
+
+    return {
+      label: `${minutes}m`,
+      className: 'border-rose-500/40 bg-rose-500/15 text-rose-200',
+    };
+  };
+
+  const delayBadge = getDelayBadge(order.created_at);
 
   return (
     <div className="rounded-2xl border border-slate-700 bg-slate-950/80 overflow-hidden shadow-sm hover:shadow-md transition">
@@ -44,8 +67,8 @@ export default function OrderCard({
               {order.cliente_nombre}
             </p>
           </div>
-          <span className="whitespace-nowrap text-[10px] font-bold text-amber-300 bg-slate-800 px-2 py-1 rounded-full">
-            {getTimeElapsed(order.created_at)}
+          <span className={`whitespace-nowrap rounded-full border px-2 py-1 text-[10px] font-bold ${delayBadge.className}`}>
+            {delayBadge.label}
           </span>
         </div>
       </div>
@@ -91,45 +114,56 @@ export default function OrderCard({
           </div>
         </div>
 
-        {/* Productos desplegable */}
-        <button
-          type="button"
-          onClick={() => setShowDetails(!showDetails)}
-          className="w-full flex items-center justify-between gap-2 rounded-lg bg-slate-800/50 px-2 py-1.5 text-left hover:bg-slate-800 transition"
-        >
-          <span className="text-[10px] uppercase tracking-[0.1em] font-semibold text-slate-400">
-            📦 {order.items?.length || 0} productos
-          </span>
-          {showDetails ? (
-            <ChevronUp className="h-3 w-3 text-slate-500" />
-          ) : (
-            <ChevronDown className="h-3 w-3 text-slate-500" />
-          )}
-        </button>
+        <div className="rounded-xl border border-slate-800/80 bg-slate-900/70 p-2">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-[10px] uppercase tracking-[0.1em] font-semibold text-slate-500">
+              📦 {order.items?.length || 0} productos
+            </span>
+            <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-slate-400">
+              {order.items?.length === 1 ? '1 ítem' : `${order.items?.length || 0} ítems`}
+            </span>
+          </div>
 
-        {/* Detalle de productos (oculto por defecto) */}
-        {showDetails ? (
-          <div className="rounded-lg bg-slate-900/80 p-2 border border-slate-800 max-h-[120px] overflow-y-auto text-[10px] text-slate-400 space-y-0.5">
-            {order.items?.map((p, idx) => {
-              const imgUrl = (p as any).imagen_url || (p as any).producto?.imagen_url || null;
+          <div className="max-h-56 space-y-2.5 overflow-y-auto pr-1">
+            {order.items?.length ? order.items.map((item, idx) => {
+              const imageUrl = (item as any).imagen_url || (item as any).imagen || (item as any).foto || (item as any).img || (item as any).producto?.imagen_url || (item as any).producto?.imagen || (item as any).producto?.foto || null;
+              const notes = (item as any).notas || (item as any).observaciones || null;
+              const name = item.nombre || 'Producto';
+              const quantity = item.cantidad || 1;
               return (
-                <div key={idx} className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <div className="h-8 w-8 flex-shrink-0 overflow-hidden rounded-lg bg-slate-800">
-                      {imgUrl ? (
-                        <img src={imgUrl} alt={p.nombre} className="h-full w-full object-cover" />
-                      ) : (
-                        <div className="flex h-full items-center justify-center text-xs text-slate-500">—</div>
-                      )}
-                    </div>
-                    <span className="truncate">{p.cantidad}× {p.nombre}</span>
+                <div key={idx} className="flex items-start gap-3 rounded-2xl border border-slate-800 bg-slate-900/60 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-cyan-500/30 bg-cyan-500/15 text-lg font-black text-cyan-200 shadow-[0_0_18px_rgba(34,211,238,0.18)]">
+                    {quantity}x
                   </div>
-                  <span className="text-slate-500">{formatCurrency(p.precio * p.cantidad)}</span>
+                  <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-slate-700 bg-slate-950">
+                    <img
+                      src={imageUrl || 'data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%27400%27 height=%27250%27%3E%3Crect width=%27400%27 height=%27250%27 fill=%27%23222%27/%3E%3Ctext x=%2750%25%27 y=%2750%25%27 dominant-baseline=%27middle%27 text-anchor=%27middle%27 font-size=%2720%27 fill=%27%23aaa%27%3ESin imagen%3C/text%3E%3C/svg%3E'}
+                      alt={name}
+                      className="h-full w-full object-cover"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = 'data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%27400%27 height=%27250%27%3E%3Crect width=%27400%27 height=%27250%27 fill=%27%23222%27/%3E%3Ctext x=%2750%25%27 y=%2750%25%27 dominant-baseline=%27middle%27 text-anchor=%27middle%27 font-size=%2720%27 fill=%27%23aaa%27%3ESin imagen%3C/text%3E%3C/svg%3E';
+                      }}
+                    />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold leading-tight text-white">{name}</p>
+                    {notes ? (
+                      <div className="mt-1 inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] font-semibold text-amber-200">
+                        <span>⚠️</span>
+                        <span>{notes}</span>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               );
-            })}
+            }) : (
+              <div className="rounded-lg border border-dashed border-slate-700 bg-slate-950/40 px-3 py-3 text-xs text-slate-500">
+                Sin productos cargados
+              </div>
+            )}
           </div>
-        ) : null}
+        </div>
       </div>
 
       {/* Acciones contextuales */}

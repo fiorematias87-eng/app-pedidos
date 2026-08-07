@@ -23,15 +23,45 @@ type CartItem = {
 type DeliveryMethod = 'delivery' | 'retiro';
 type PaymentMethod = 'efectivo' | 'transferencia';
 
+type CheckoutCustomerData = {
+  nombre: string;
+  telefono: string;
+  direccion: string;
+  notas: string;
+};
+
+const getStoredCheckoutCustomerData = (): CheckoutCustomerData => {
+  if (typeof window === 'undefined') {
+    return { nombre: '', telefono: '', direccion: '', notas: '' };
+  }
+
+  try {
+    const saved = window.localStorage.getItem('datos_cliente_checkout');
+    if (!saved) return { nombre: '', telefono: '', direccion: '', notas: '' };
+
+    const parsed = JSON.parse(saved) as Partial<CheckoutCustomerData>;
+    return {
+      nombre: parsed.nombre || '',
+      telefono: parsed.telefono || '',
+      direccion: parsed.direccion || '',
+      notas: parsed.notas || '',
+    };
+  } catch (error) {
+    console.error('Error al parsear datos de localStorage', error);
+    return { nombre: '', telefono: '', direccion: '', notas: '' };
+  }
+};
+
 export default function HomeCliente() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [cliente, setCliente] = useState('');
-  const [telefono, setTelefono] = useState('');
-  const [direccion, setDireccion] = useState('');
-  const [notas, setNotas] = useState('');
+  const initialCheckoutData = getStoredCheckoutCustomerData();
+  const [cliente, setCliente] = useState(initialCheckoutData.nombre);
+  const [telefono, setTelefono] = useState(initialCheckoutData.telefono);
+  const [direccion, setDireccion] = useState(initialCheckoutData.direccion);
+  const [notas, setNotas] = useState(initialCheckoutData.notas);
   const [status, setStatus] = useState<string | null>(null);
   const [config, setConfig] = useState<TiendaConfig | null>(null);
 
@@ -60,6 +90,25 @@ export default function HomeCliente() {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('transferencia');
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    const savedData = getStoredCheckoutCustomerData();
+    if (savedData.nombre || savedData.telefono || savedData.direccion || savedData.notas) {
+      setCliente(savedData.nombre);
+      setTelefono(savedData.telefono);
+      setDireccion(savedData.direccion);
+      setNotas(savedData.notas);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(
+        'datos_cliente_checkout',
+        JSON.stringify({ nombre: cliente, telefono, direccion, notas })
+      );
+    }
+  }, [cliente, telefono, direccion, notas]);
 
   useEffect(() => {
     const loadAllData = async () => {
@@ -257,10 +306,6 @@ export default function HomeCliente() {
 
       // **PASO 3: Limpiar carrito tras intentar guardar**
       setCart([]);
-      setCliente('');
-      setTelefono('');
-      setDireccion('');
-      setNotas('');
       setIsCartOpen(false);
 
       if (shouldOpenWhatsApp && waUrl) {

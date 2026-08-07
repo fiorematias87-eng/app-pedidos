@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, MapPin, Phone, Smartphone, Truck, MessageCircle } from 'lucide-react';
+import { CheckCircle2, MapPin, Phone, Smartphone, Truck, MessageCircle, LogOut } from 'lucide-react';
 import { toast } from 'sonner';
 import { pedidosService } from '../services/pedidos.service';
 import { supabase } from '../lib/supabase';
@@ -13,11 +13,10 @@ const getMapsUrl = (direccion: string, localidad: string = 'Florencio Varela') =
   return `https://www.google.com/maps/search/?api=1&query=${query}`;
 };
 
-const getWhatsAppUrl = (telefono: string, idPedido: string) => {
+const getWhatsAppUrl = (telefono: string) => {
   const numLimpio = telefono.replace(/\D/g, '');
   const phoneFormatted = numLimpio.startsWith('54') ? numLimpio : `549${numLimpio}`;
-  const mensaje = encodeURIComponent(`¡Hola! Soy el repartidor de Lo de Fiore. Estoy en camino con tu pedido #${idPedido.slice(0, 5)} 🛵`);
-  return `https://wa.me/${phoneFormatted}?text=${mensaje}`;
+  return `https://wa.me/${phoneFormatted}`;
 };
 
 export default function DeliveryPanel() {
@@ -26,37 +25,45 @@ export default function DeliveryPanel() {
   const [selectedDriverId, setSelectedDriverId] = useState<string>('');
   const [tab, setTab] = useState<'mine' | 'kitchen' | 'peers'>('mine');
   const [isUploadingAsset, setIsUploadingAsset] = useState(false);
+  const [sessionDriver, setSessionDriver] = useState<Repartidor | null>(null);
+
+  const refreshOrders = async () => {
+    const pedidos = await pedidosService.getPedidos();
+    setOrders(pedidos);
+  };
 
   useEffect(() => {
     const load = async () => {
+      const storedToken = localStorage.getItem('delivery_auth_token');
+      if (!storedToken) {
+        window.location.assign('/delivery/login');
+        return;
+      }
+
       const [drivers, pedidos] = await Promise.all([pedidosService.getRepartidores(), pedidosService.getPedidos()]);
       setRepartidores(drivers);
       setOrders(pedidos);
-        if (drivers.length > 0) {
-          // load persisted driver selection if any
-          const persisted = localStorage.getItem('delivery_driver_id');
-          if (persisted && drivers.find((d) => d.id === persisted)) {
-            setSelectedDriverId(persisted);
-          } else {
-            setSelectedDriverId(drivers[0].id);
-          }
-        }
+
+      const persisted = localStorage.getItem('delivery_driver_id');
+      const activeDriver = drivers.find((driver) => driver.id === persisted) || drivers[0] || null;
+      if (activeDriver) {
+        setSelectedDriverId(activeDriver.id);
+        setSessionDriver(activeDriver);
+      }
     };
 
     void load();
 
-    const channel = pedidosService.subscribeToOrders((pedido, eventType) => {
-      setOrders((prev) => {
-        const exists = prev.find((item) => item.id === pedido.id);
-        if (eventType === 'DELETE') {
-          return prev.filter((item) => item.id !== pedido.id);
+    const channel = supabase
+      .channel('pedidos_realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'pedidos' },
+        async () => {
+          await refreshOrders();
         }
-        if (!exists) {
-          return [pedido, ...prev];
-        }
-        return prev.map((item) => (item.id === pedido.id ? pedido : item));
-      });
-    });
+      )
+      .subscribe();
 
     return () => {
       void supabase.removeChannel(channel);
@@ -77,10 +84,9 @@ export default function DeliveryPanel() {
     ),
     [orders]
   );
-  const selectedDriver = repartidores.find((driver) => driver.id === selectedDriverId);
+  const selectedDriver = sessionDriver || repartidores.find((driver) => driver.id === selectedDriverId) || null;
 
   useEffect(() => {
-    // persist selected driver
     if (selectedDriverId) {
       localStorage.setItem('delivery_driver_id', selectedDriverId);
     }
@@ -135,8 +141,34 @@ export default function DeliveryPanel() {
     });
   };
 
+  const handleLogout = () => {
+    localStorage.removeItem('delivery_auth_token');
+    localStorage.removeItem('delivery_driver_id');
+    window.location.assign('/delivery/login');
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 to-slate-900 text-slate-100 p-4">
+      <style>{`
+        .kitchen-scrollbar {
+          scrollbar-width: thin;
+          scrollbar-color: #334155 #020617;
+        }
+        .kitchen-scrollbar::-webkit-scrollbar {
+          width: 8px;
+        }
+        .kitchen-scrollbar::-webkit-scrollbar-track {
+          background: #020617;
+          border-radius: 999px;
+        }
+        .kitchen-scrollbar::-webkit-scrollbar-thumb {
+          background: #334155;
+          border-radius: 999px;
+        }
+        .kitchen-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: #475569;
+        }
+      `}</style>
       <div className="mx-auto w-full max-w-md">
         {/* Header */}
         <div className="overflow-hidden rounded-3xl border border-slate-800 bg-slate-900/90 shadow-lg shadow-slate-950/50">
@@ -166,7 +198,7 @@ export default function DeliveryPanel() {
               <div className="min-w-0 flex-1">
                 <p className="text-xs uppercase tracking-[0.2em] text-cyan-400 font-semibold">Repartidor</p>
                 <h1 className="mt-1 text-xl font-bold text-white">
-                  Hola, {selectedDriver?.nombre || 'Selecciona un repartidor'}
+                  Hola, {selectedDriver?.nombre || 'Repartidor'}
                 </h1>
                 <p className="text-sm text-slate-400">{selectedDriver?.telefono || 'Activo para recibir pedidos'}</p>
               </div>
@@ -194,18 +226,14 @@ export default function DeliveryPanel() {
             </div>
             {isUploadingAsset ? <p className="mt-3 text-sm text-slate-400">Subiendo imagen...</p> : null}
 
-            <select
-              value={selectedDriverId}
-              onChange={(e) => setSelectedDriverId(e.target.value)}
-              className="mt-4 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm font-semibold text-white outline-none transition focus:border-cyan-500"
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-700 bg-slate-950/80 px-4 py-3 text-sm font-semibold text-slate-200 transition hover:border-rose-500 hover:text-rose-300"
             >
-              <option value="">-- Selecciona repartidor --</option>
-              {repartidores.map((driver) => (
-                <option key={driver.id} value={driver.id}>
-                  {driver.nombre}
-                </option>
-              ))}
-            </select>
+              <LogOut className="h-4 w-4" />
+              Cerrar sesión
+            </button>
           </div>
         </div>
 
@@ -247,11 +275,14 @@ export default function DeliveryPanel() {
                           {order.items.map((product, itemIndex) => (
                             <div key={itemIndex} className="min-w-[170px] rounded-3xl border border-slate-800 bg-slate-900 p-3 shadow-sm">
                               <div className="h-20 w-full overflow-hidden rounded-2xl bg-slate-800">
-                                {product.imagen_url ? (
-                                  <img src={product.imagen_url} alt={product.nombre} className="h-full w-full object-cover" />
-                                ) : (
-                                  <div className="flex h-full items-center justify-center text-xs uppercase tracking-[0.15em] text-slate-500">Sin imagen</div>
-                                )}
+                                <img
+                                  src={(product as any).imagen_url || '/placeholder-food.png'}
+                                  alt={product.nombre}
+                                  className="h-full w-full object-cover"
+                                  onError={(e) => {
+                                    e.currentTarget.style.display = 'none';
+                                  }}
+                                />
                               </div>
                               <div className="mt-3 space-y-2 text-xs text-slate-300">
                                 <div className="flex items-center justify-between gap-2">
@@ -288,26 +319,29 @@ export default function DeliveryPanel() {
                             href={getMapsUrl(order.cliente_direccion)}
                             target="_blank"
                             rel="noreferrer"
-                            className="inline-flex items-center justify-center rounded-2xl bg-slate-800 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-700"
+                            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-700 bg-slate-800 px-4 py-3 text-sm font-semibold text-white transition hover:border-cyan-500 hover:bg-slate-700"
                           >
-                            🗺️ GPS
+                            <MapPin className="h-4 w-4 text-cyan-400" />
+                            GPS
                           </a>
                           {order.cliente_telefono ? (
                             <a
-                              href={getWhatsAppUrl(order.cliente_telefono, order.id)}
+                              href={getWhatsAppUrl(order.cliente_telefono)}
                               target="_blank"
                               rel="noreferrer"
-                              className="inline-flex items-center justify-center rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-emerald-500"
+                              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-500"
                             >
-                              💬 WhatsApp
+                              <MessageCircle className="h-4 w-4" />
+                              WhatsApp
                             </a>
                           ) : null}
                           {order.cliente_telefono ? (
                             <a
                               href={`tel:${order.cliente_telefono}`}
-                              className="inline-flex items-center justify-center rounded-2xl bg-slate-800 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-700"
+                              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-700 bg-slate-800 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-700"
                             >
-                              📞 Llamar
+                              <Phone className="h-4 w-4 text-slate-300" />
+                              Llamar
                             </a>
                           ) : null}
                           <button
@@ -330,27 +364,58 @@ export default function DeliveryPanel() {
                 )}
               </div>
             ) : tab === 'kitchen' ? (
-              <div className="space-y-3">
-                {orders.filter(o => o.estado === 'en_preparacion').map((order) => (
-                  <div key={order.id} className="rounded-2xl border border-slate-800 bg-slate-900/80 p-3">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-xs text-slate-400">#{order.id?.slice(0,8)} · {order.cliente_nombre}</p>
-                        <p className="text-sm font-semibold text-white">{order.cliente_direccion || 'Retiro'}</p>
+              <div className="max-h-[70vh] overflow-y-auto pr-2 kitchen-scrollbar">
+                <div className="space-y-3">
+                  {orders.filter((o) => o.estado === 'en_preparacion').map((order) => (
+                    <div key={order.id} className="rounded-2xl border border-slate-800 bg-slate-900/80 p-3 shadow-[0_10px_30px_rgba(2,6,23,0.35)]">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-[11px] uppercase tracking-[0.25em] text-cyan-400">#{order.id?.slice(0, 8)}</p>
+                          <p className="mt-1 text-sm font-semibold text-white">{order.cliente_nombre}</p>
+                          <p className="text-xs text-slate-400">{order.cliente_direccion || 'Retiro'}</p>
+                        </div>
+                        <span className="rounded-full bg-orange-500/10 px-2.5 py-1 text-[11px] font-semibold text-orange-300">Cocina</span>
                       </div>
-                      <div className="text-right text-xs text-slate-400">
-                        <p>{order.estado}</p>
-                        <p className="font-bold text-white">{formatCurrency(order.total)}</p>
+
+                      <div className="mt-3 space-y-2">
+                        {order.items?.length ? (
+                          order.items.map((product, itemIndex) => (
+                            <div key={`${order.id}-${itemIndex}`} className="flex items-center gap-2 rounded-2xl border border-slate-800 bg-slate-950/70 px-2 py-2">
+                              <div className="h-11 w-11 shrink-0 overflow-hidden rounded-xl bg-slate-800">
+                                <img
+                                  src={(product as any).imagen_url || '/placeholder-food.png'}
+                                  alt={product.nombre}
+                                  className="h-full w-full object-cover"
+                                  onError={(e) => {
+                                    e.currentTarget.style.display = 'none';
+                                  }}
+                                />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2">
+                                  <p className="truncate text-sm font-semibold text-white">{product.nombre}</p>
+                                  <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-slate-400">x{product.cantidad}</span>
+                                </div>
+                                {product.notas || (product as any).observaciones ? (
+                                  <p className="mt-1 truncate text-xs text-amber-300">{(product as any).notas || (product as any).observaciones}</p>
+                                ) : null}
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-sm text-slate-500">Sin productos cargados</p>
+                        )}
                       </div>
+
+                      {order.notas ? (
+                        <div className="mt-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                          <p className="font-semibold text-amber-200">Notas del pedido</p>
+                          <p className="mt-1 text-slate-200">{order.notas}</p>
+                        </div>
+                      ) : null}
                     </div>
-                    {order.notas ? (
-                      <div className="mt-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
-                        <p className="font-semibold text-amber-200">Observaciones</p>
-                        <p className="mt-1 text-slate-200">{order.notas}</p>
-                      </div>
-                    ) : null}
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             ) : (
               <div className="space-y-3">

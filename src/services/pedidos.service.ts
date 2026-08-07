@@ -19,10 +19,41 @@ const normalizePedidoEstado = (estado?: string | null) => {
   }
 };
 
-const normalizePedido = (pedido: Partial<Pedido> | null) => {
+const normalizePedidoItems = (pedido: Partial<Pedido> | null, productosGlobal: Producto[] = []) => {
+  const rawItems = Array.isArray((pedido as any)?.items)
+    ? (pedido as any).items
+    : Array.isArray((pedido as any)?.productos)
+      ? (pedido as any).productos
+      : [];
+
+  return rawItems.map((item: any) => {
+    let foto = item?.imagen_url || item?.imagen || item?.foto || item?.img || item?.producto?.imagen_url || item?.producto?.imagen || item?.producto?.foto || item?.producto?.image || null;
+
+    if (!foto && productosGlobal.length) {
+      const nombreItem = String(item?.nombre || '').trim().toLowerCase();
+      const productoId = item?.producto_id || item?.producto?.id || item?.id;
+      const productoEncontrado = productosGlobal.find((producto) => {
+        if (productoId && producto.id === productoId) return true;
+        return producto.nombre?.toLowerCase().trim() === nombreItem;
+      });
+
+      if (productoEncontrado) {
+        foto = productoEncontrado.imagen_url || (productoEncontrado as any).imagen || (productoEncontrado as any).foto || (productoEncontrado as any).image || null;
+      }
+    }
+
+    return {
+      ...item,
+      imagen_url: foto || null,
+    };
+  });
+};
+
+const normalizePedido = (pedido: Partial<Pedido> | null, productosGlobal: Producto[] = []) => {
   if (!pedido) return null;
   return {
     ...pedido,
+    items: normalizePedidoItems(pedido, productosGlobal),
     estado: normalizePedidoEstado(pedido.estado as string | null),
   } as Pedido;
 };
@@ -201,10 +232,56 @@ export const pedidosService = {
     return data as Repartidor[];
   },
 
+  async getTodayMetrics() {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const { data, error } = await supabase
+      .from('pedidos')
+      .select('id,total,estado,metodo_pago')
+      .gte('created_at', startOfToday.toISOString());
+
+    if (error) throw error;
+
+    const pedidos = (data || []) as Array<Pick<Pedido, 'id' | 'total' | 'estado' | 'metodo_pago'>>;
+    const completed = pedidos.filter((pedido) => pedido.estado === 'completado');
+    const ventasHoy = completed.reduce((sum, pedido) => sum + Number(pedido.total || 0), 0);
+    const pedidosHoy = pedidos.length;
+    const ticketPromedio = completed.length ? Math.round(ventasHoy / completed.length) : 0;
+
+    const paymentBreakdown = ['efectivo', 'transferencia'].map((metodo) => {
+      const methodOrders = pedidos.filter((pedido) => pedido.metodo_pago === metodo);
+      return {
+        metodo,
+        count: methodOrders.length,
+        total: methodOrders.reduce((sum, pedido) => sum + Number(pedido.total || 0), 0),
+      };
+    });
+
+    return {
+      ventasHoy,
+      pedidosHoy,
+      ticketPromedio,
+      paymentBreakdown,
+    };
+  },
+
   async createRepartidor(repartidor: Partial<Repartidor>) {
     const { data, error } = await supabase.from('repartidores').insert(repartidor).select().single();
     if (error) throw error;
     return data as Repartidor;
+  },
+
+  async loginRepartidor(usuario: string, pin: string) {
+    const { data, error } = await supabase
+      .from('repartidores')
+      .select('*')
+      .eq('usuario', usuario.trim())
+      .eq('pin', pin.trim())
+      .maybeSingle();
+
+    if (error) throw error;
+    return data as Repartidor | null;
   },
 
   async updateRepartidor(id: string, updates: Partial<Repartidor>) {
@@ -219,9 +296,16 @@ export const pedidosService = {
   },
 
   async getPedidos() {
-    const { data, error } = await supabase.from('pedidos').select('*').order('created_at', { ascending: false });
-    if (error) throw error;
-    return (data as Pedido[]).map(normalizePedido) as Pedido[];
+    const [{ data: pedidosData, error: pedidosError }, { data: productosData, error: productosError }] = await Promise.all([
+      supabase.from('pedidos').select('*').order('created_at', { ascending: false }),
+      supabase.from('productos').select('*'),
+    ]);
+
+    if (pedidosError) throw pedidosError;
+    if (productosError) throw productosError;
+
+    const productos = (productosData || []) as Producto[];
+    return (pedidosData || []).map((pedido) => normalizePedido(pedido as Partial<Pedido>, productos)) as Pedido[];
   },
 
   /**
@@ -230,9 +314,11 @@ export const pedidosService = {
    * thousands of historical pedidos.
    */
   async getPedidosForAdmin() {
-    const activeStates = ['pendiente', 'en_preparacion', 'en_camino'];
+    const activeStates = ['pendiente', 'en_preparacion', 'en_camino', 'en_cocina'];
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
 
-    const [{ data: activeData, error: activeErr }, { data: deliveredData, error: deliveredErr }] = await Promise.all([
+    const [{ data: activeData, error: activeErr }, { data: deliveredData, error: deliveredErr }, { data: productosData, error: productosError }] = await Promise.all([
       supabase
         .from('pedidos')
         .select('*')
@@ -241,16 +327,20 @@ export const pedidosService = {
       supabase
         .from('pedidos')
         .select('*')
-        .eq('estado', 'completado')
+        .in('estado', ['completado', 'entregado'])
+        .gte('created_at', startOfToday.toISOString())
         .order('created_at', { ascending: false })
         .limit(50),
+      supabase.from('productos').select('*'),
     ]);
 
     if (activeErr) throw activeErr;
     if (deliveredErr) throw deliveredErr;
+    if (productosError) throw productosError;
 
     const active = (activeData || []) as Pedido[];
     const delivered = (deliveredData || []) as Pedido[];
+    const productos = (productosData || []) as Producto[];
 
     // merge keeping active first, and avoid duplicates
     const ids = new Set<string>();
@@ -269,13 +359,20 @@ export const pedidosService = {
       }
     });
 
-    return merged.map(normalizePedido) as Pedido[];
+    return merged.map((pedido) => normalizePedido(pedido as Partial<Pedido>, productos)) as Pedido[];
   },
 
   async getPedido(id: string) {
-    const { data, error } = await supabase.from('pedidos').select('*').eq('id', id).maybeSingle();
-    if (error) throw error;
-    return normalizePedido(data as Pedido | null);
+    const [{ data: pedidoData, error: pedidoError }, { data: productosData, error: productosError }] = await Promise.all([
+      supabase.from('pedidos').select('*').eq('id', id).maybeSingle(),
+      supabase.from('productos').select('*'),
+    ]);
+
+    if (pedidoError) throw pedidoError;
+    if (productosError) throw productosError;
+
+    const productos = (productosData || []) as Producto[];
+    return normalizePedido(pedidoData as Pedido | null, productos);
   },
 
   async createPedido(pedido: Partial<Pedido>) {

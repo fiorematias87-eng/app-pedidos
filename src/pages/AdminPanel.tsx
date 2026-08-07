@@ -46,6 +46,31 @@ const metricCards = [
   { title: 'Ticket promedio', icon: Wallet },
 ];
 
+type TodayMetrics = {
+  ventasHoy: number;
+  pedidosHoy: number;
+  ticketPromedio: number;
+  paymentBreakdown: Array<{ metodo: string; count: number; total: number }>;
+};
+
+const buildTodayMetrics = (pedidos: Array<Pick<Pedido, 'estado' | 'total' | 'metodo_pago'>>): TodayMetrics => {
+  const completed = pedidos.filter((pedido) => pedido.estado === 'completado');
+  const ventasHoy = completed.reduce((sum, pedido) => sum + Number(pedido.total || 0), 0);
+  const pedidosHoy = pedidos.length;
+  const ticketPromedio = completed.length ? Math.round(ventasHoy / completed.length) : 0;
+
+  const paymentBreakdown = ['efectivo', 'transferencia'].map((metodo) => {
+    const methodOrders = pedidos.filter((pedido) => pedido.metodo_pago === metodo);
+    return {
+      metodo,
+      count: methodOrders.length,
+      total: methodOrders.reduce((sum, pedido) => sum + Number(pedido.total || 0), 0),
+    };
+  });
+
+  return { ventasHoy, pedidosHoy, ticketPromedio, paymentBreakdown };
+};
+
 type ProductFormState = {
   nombre: string;
   descripcion: string;
@@ -350,7 +375,8 @@ export default function AdminPanel() {
   const [savingConfigSection, setSavingConfigSection] = useState<'brand' | 'bank' | null>(null);
   const [creatingProduct, setCreatingProduct] = useState(false);
   const [showDriverModal, setShowDriverModal] = useState(false);
-  const [driverForm, setDriverForm] = useState({ nombre: '', telefono: '' });
+  const [driverForm, setDriverForm] = useState({ nombre: '', telefono: '', usuario: '', pin: '' });
+  const [todayMetrics, setTodayMetrics] = useState<TodayMetrics>({ ventasHoy: 0, pedidosHoy: 0, ticketPromedio: 0, paymentBreakdown: [] });
 
   const fetchStoreConfig = async () => {
     const { data, error } = await supabase.from('tienda_config').select('*').eq('id', 'store').single();
@@ -413,6 +439,11 @@ export default function AdminPanel() {
     if (resProds.data) setProducts(resProds.data as Producto[]);
   };
 
+  const refreshOrders = async () => {
+    const pedidos = await pedidosService.getPedidosForAdmin();
+    setOrders(pedidos);
+  };
+
   useEffect(() => {
     const load = async () => {
       await loadAllData();
@@ -429,32 +460,25 @@ export default function AdminPanel() {
         setRepartidores(driversData as Repartidor[]);
       }
 
-      const pedidos = await pedidosService.getPedidosForAdmin();
-      setOrders(pedidos);
+      await refreshOrders();
+      await loadTodayMetrics();
     };
 
     void load();
 
-    const ordersChannel = pedidosService.subscribeToOrders((pedido, eventType) => {
-      setOrders((prev) => {
-        if (eventType === 'DELETE') {
-          return prev.filter((item) => item.id !== pedido.id);
+    const ordersChannel = supabase
+      .channel('pedidos_realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'pedidos' },
+        async () => {
+          await refreshOrders();
+          await loadTodayMetrics();
+          setPulse(true);
+          window.setTimeout(() => setPulse(false), 800);
         }
-
-        const exists = prev.find((item) => item.id === pedido.id);
-        if (!exists) {
-          if (pedido.estado === 'pendiente') {
-            playAttentionTone();
-            toast.success(`Nuevo pedido recibido: ${pedido.id}`);
-          }
-          return [pedido, ...prev];
-        }
-
-        return prev.map((item) => (item.id === pedido.id ? pedido : item));
-      });
-      setPulse(true);
-      window.setTimeout(() => setPulse(false), 800);
-    });
+      )
+      .subscribe();
 
     // Suscripción en tiempo real a repartidores
     const driversChannel = supabase
@@ -531,9 +555,18 @@ export default function AdminPanel() {
     });
   }, [products, search, selectedCategory]);
 
-  const ventasHoy = orders.filter((order) => order.estado !== 'completado').reduce((sum, order) => sum + order.total, 0);
-  const pedidosHoy = orders.filter((order) => order.estado !== 'completado').length;
-  const ticketPromedio = pedidosHoy ? Math.round(ventasHoy / pedidosHoy) : 0;
+  const loadTodayMetrics = async () => {
+    try {
+      const metrics = await pedidosService.getTodayMetrics();
+      setTodayMetrics(metrics);
+    } catch (error) {
+      console.error('Error cargando métricas del día:', error);
+    }
+  };
+
+  const ventasHoy = todayMetrics.ventasHoy;
+  const pedidosHoy = todayMetrics.pedidosHoy;
+  const ticketPromedio = todayMetrics.ticketPromedio;
 
   const persistConfig = async (nextConfig: TiendaConfig) => {
     const { data, error } = await supabase.from('tienda_config').upsert(
@@ -872,26 +905,47 @@ export default function AdminPanel() {
     setProducts(await pedidosService.getProducts());
   };
 
-  const handleCreateDriver = async (driver: Omit<Repartidor, 'id'>) => {
-    const { error } = await supabase
-      .from('repartidores')
-      .insert([driver]);
-    
+  const refreshRepartidores = async () => {
+    const { data, error } = await supabase.from('repartidores').select('*').order('nombre', { ascending: true });
+    if (error) {
+      console.error('Error cargando repartidores:', error);
+      return;
+    }
+    setRepartidores((data || []) as Repartidor[]);
+  };
+
+  const handleCreateDriver = async (driver: Partial<Repartidor>) => {
+    const payload = {
+      ...driver,
+      activo: driver.activo ?? true,
+      estado: driver.estado || 'disponible',
+    };
+
+    const { error } = await supabase.from('repartidores').insert([payload]).select().single();
+
     if (error) {
       console.error('Error creando repartidor:', error);
       throw error;
     }
+
+    await refreshRepartidores();
   };
 
   const handleUpdateDriver = async (id: string, updates: Partial<Repartidor>) => {
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('repartidores')
       .update(updates)
-      .eq('id', id);
-    
+      .eq('id', id)
+      .select()
+      .single();
+
     if (error) {
       console.error('Error actualizando repartidor:', error);
       throw error;
+    }
+
+    if (data) {
+      await refreshRepartidores();
     }
   };
 
@@ -900,11 +954,13 @@ export default function AdminPanel() {
       .from('repartidores')
       .delete()
       .eq('id', id);
-    
+
     if (error) {
       console.error('Error eliminando repartidor:', error);
       throw error;
     }
+
+    await refreshRepartidores();
   };
 
   const handleUpload = async (field: 'logo_url' | 'portada_url' | 'imagen_url', file: File | null) => {
@@ -1058,14 +1114,24 @@ export default function AdminPanel() {
   const toggleSection = (key: string) => setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
 
   const handleCreateDriverFromModal = async () => {
-    if (!driverForm.nombre.trim()) {
-      toast.error('Ingresá el nombre del repartidor');
+    const nombre = driverForm.nombre.trim();
+    const telefono = driverForm.telefono.trim();
+    const usuario = driverForm.usuario.trim();
+    const pin = driverForm.pin.trim();
+
+    if (!nombre || !telefono || !usuario || !pin) {
+      toast.error('Completá nombre, teléfono, usuario y PIN');
+      return;
+    }
+
+    if (!/^\d{4,6}$/.test(pin)) {
+      toast.error('El PIN debe tener entre 4 y 6 dígitos numéricos');
       return;
     }
 
     try {
-      await handleCreateDriver({ nombre: driverForm.nombre.trim(), telefono: driverForm.telefono.trim(), estado: 'disponible' });
-      setDriverForm({ nombre: '', telefono: '' });
+      await handleCreateDriver({ nombre, telefono, usuario, pin, estado: 'disponible', activo: true });
+      setDriverForm({ nombre: '', telefono: '', usuario: '', pin: '' });
       setShowDriverModal(false);
       toast.success('Repartidor agregado');
     } catch {
@@ -1079,6 +1145,15 @@ export default function AdminPanel() {
       toast.success('Repartidor eliminado');
     } catch {
       toast.error('No se pudo eliminar el repartidor');
+    }
+  };
+
+  const handleToggleDriverActive = async (driver: Repartidor) => {
+    try {
+      await handleUpdateDriver(driver.id, { activo: !driver.activo });
+      toast.success(driver.activo ? 'Repartidor desactivado' : 'Repartidor activado');
+    } catch {
+      toast.error('No se pudo cambiar el estado del repartidor');
     }
   };
 
@@ -1142,6 +1217,22 @@ export default function AdminPanel() {
             })}
           </div>
 
+          <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-white">Desglose rápido por medio de pago</p>
+              <span className="text-xs text-slate-400">Hoy</span>
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {todayMetrics.paymentBreakdown.map((entry) => (
+                <div key={entry.metodo} className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
+                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400">{entry.metodo === 'efectivo' ? 'Efectivo' : 'Transferencia'}</p>
+                  <p className="mt-1 text-lg font-semibold text-white">{entry.count} pedidos</p>
+                  <p className="text-sm text-cyan-300">{formatCurrency(entry.total)}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
           {showDriverModal ? (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-3">
               <div className="w-full max-w-md rounded-3xl border border-slate-800 bg-slate-900 p-4 shadow-2xl">
@@ -1161,6 +1252,8 @@ export default function AdminPanel() {
                     <div className="space-y-2">
                       <input value={driverForm.nombre} onChange={(e) => setDriverForm((prev) => ({ ...prev, nombre: e.target.value }))} placeholder="Nombre" className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none" />
                       <input value={driverForm.telefono} onChange={(e) => setDriverForm((prev) => ({ ...prev, telefono: e.target.value }))} placeholder="Teléfono" className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none" />
+                      <input value={driverForm.usuario} onChange={(e) => setDriverForm((prev) => ({ ...prev, usuario: e.target.value }))} placeholder="Usuario" className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none" />
+                      <input value={driverForm.pin} onChange={(e) => setDriverForm((prev) => ({ ...prev, pin: e.target.value.replace(/\D/g, '').slice(0, 6) }))} placeholder="PIN (4-6 dígitos)" inputMode="numeric" className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none" />
                       <button type="button" onClick={() => void handleCreateDriverFromModal()} className="flex w-full items-center justify-center gap-2 rounded-xl bg-cyan-600 px-3 py-2 text-sm font-semibold text-white">
                         <Plus className="h-4 w-4" />
                         Agregar repartidor
@@ -1174,14 +1267,20 @@ export default function AdminPanel() {
                       {repartidores.length === 0 ? (
                         <p className="text-sm text-slate-500">No hay repartidores cargados.</p>
                       ) : repartidores.map((driver) => (
-                        <div key={driver.id} className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-900 px-3 py-2">
+                        <div key={driver.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2">
                           <div>
                             <p className="text-sm font-semibold text-white">{driver.nombre}</p>
-                            <p className="text-xs text-slate-400">{driver.telefono || 'Sin teléfono'}</p>
+                            <p className="text-xs text-slate-400">{driver.telefono || 'Sin teléfono'} • {driver.usuario || 'Sin usuario'}</p>
+                            <p className="text-[11px] text-slate-500">{driver.activo === false ? 'Desactivado' : 'Activo'}</p>
                           </div>
-                          <button type="button" onClick={() => void handleDeleteDriverFromModal(driver.id)} className="rounded-lg bg-rose-500/15 px-2 py-1 text-xs font-semibold text-rose-300">
-                            Borrar
-                          </button>
+                          <div className="flex flex-wrap gap-2">
+                            <button type="button" onClick={() => void handleToggleDriverActive(driver)} className="rounded-lg border border-slate-700 px-2 py-1 text-xs font-semibold text-slate-300">
+                              {driver.activo === false ? 'Activar' : 'Desactivar'}
+                            </button>
+                            <button type="button" onClick={() => void handleDeleteDriverFromModal(driver.id)} className="rounded-lg bg-rose-500/15 px-2 py-1 text-xs font-semibold text-rose-300">
+                              Borrar
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>

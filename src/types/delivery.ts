@@ -42,6 +42,9 @@ export interface Repartidor {
   estado: 'disponible' | 'ocupado' | 'inactivo';
   foto_perfil?: string | null;
   foto_portada?: string | null;
+  usuario?: string | null;
+  pin?: string | null;
+  activo?: boolean;
 }
 
 export interface Pedido {
